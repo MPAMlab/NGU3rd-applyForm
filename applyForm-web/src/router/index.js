@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 // 请根据你实际存放 Index.vue 的路径修改这里的路径
 // 如果放在 src/views 目录下，路径可能是 '../views/Index.vue'
 // 如果放在 src/components 目录下，路径可能是 '../components/Index.vue'
-import IndexPage from '../components/Index.vue' // 假设你放在了 src/components 下
+import IndexPage from '../views/index.vue' // 假设你放在了 src/components 下
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
