@@ -1,8 +1,11 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 
+// --- Configuration ---
+// Replace with your actual Cloudflare Worker API endpoint URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api'; // Default for local testing
+
 // --- State Management (Reactive) ---
-// Using reactive for a complex state object
 const state = reactive({
     currentStep: 1,
     teamCode: null,
@@ -10,66 +13,40 @@ const state = reactive({
     isNewTeam: false, // True if creating a new team
     newTeamName: null, // Input for new team name
     selectedColor: null, // 'red', 'green', or 'blue'
-    selectedJob: null, // 'job-attacker', 'job-defender', 'job-supporter'
+    selectedJob: null, // 'attacker', 'defender', or 'supporter' (Storing just the type now)
     maimaiId: null,
     nickname: null,
     qqNumber: null,
     privacyAgreed: false,
+
+    // UI State
     showConfirmModal: false,
     showCreateModal: false,
     showLoadingOverlay: false,
+    errorMessage: null, // To display API errors
+
+    // Data fetched from API
+    currentTeamMembers: [], // Members of the team the user is joining/creating
+    completionAllMembers: [], // All members including the newly added one for the final step
+
     confettiInterval: null, // To store interval ID for cleanup
-    // Simulated existing data (for demonstration purposes only)
-    // In a real app, this data would come from your Cloudflare Worker API
-    existingTeams: {
-        '1234': { name: '闪耀星辰', members: [
-            { color: 'green', job: 'defender', nickname: '小明' },
-            { color: 'blue', job: 'supporter', nickname: '小红' }
-        ]},
-        '5678': { name: '星光战队', members: [
-             { color: 'red', job: 'attacker', nickname: '老王' }
-        ]},
-         '9012': { name: '宇宙歌姬', members: []}
-    }
 });
 
 // --- Computed Properties ---
-// Calculate progress bar width based on current step
 const progressWidth = computed(() => {
     const stepProgress = { 1: 0, 2: 25, 3: 50, 4: 75, 5: 100 };
     return `${stepProgress[state.currentStep]}%`;
 });
 
-// Get members of the current team (excluding the user being registered until completion)
-const currentTeamMembers = computed(() => {
-    return state.existingTeams[state.teamCode]?.members || [];
+// Check if a color is disabled based on current team members
+const isColorDisabled = computed(() => (color) => {
+    return state.currentTeamMembers.some(member => member.color === color);
 });
 
-// Calculate total members shown in steps 2-4 (existing + current user)
-const totalMembers = computed(() => {
-    // Only count the current user if they are past the first step and before completion
-    return currentTeamMembers.value.length + (state.currentStep > 1 && state.currentStep < 5 ? 1 : 0);
-});
-
-// Calculate total members shown on the completion page (existing + the user who just joined)
-const completionTotalMembers = computed(() => {
-     // On the completion page, the user is considered part of the team
-     return (state.existingTeams[state.teamCode]?.members.length || 0) + 1;
-});
-
-// Get the list of all members for the completion page (existing + the new user)
-const completionAllMembers = computed(() => {
-    // Combine existing members and the newly added user for the completion list
-    // The new user's data comes from the state
-    const newUser = {
-        color: state.selectedColor,
-        // Store job type only, remove 'job-' prefix
-        job: state.selectedJob ? state.selectedJob.replace('job-', '') : null,
-        nickname: state.nickname || '你', // Use entered nickname or default to "你"
-        isCurrentUser: true // Flag to identify the user being registered
-    };
-    // Return existing members plus the new user
-    return [...(state.existingTeams[state.teamCode]?.members || []), newUser];
+// Check if a job is disabled based on current team members
+const isJobDisabled = computed(() => (jobType) => {
+     // Storing job as type ('attacker') in state/backend, converting from 'job-attacker' ID
+    return state.currentTeamMembers.some(member => member.job === jobType);
 });
 
 
@@ -86,84 +63,124 @@ function showStep(stepNumber) {
     }
 
     state.currentStep = stepNumber;
+    state.errorMessage = null; // Clear error message on step change
 
     // Trigger confetti animation when entering the completion step
     if (stepNumber === 5) {
-         // Use nextTick or a small timeout to ensure the DOM element for confetti exists
-         // before trying to add confetti elements to it.
          setTimeout(() => {
              createConfetti();
-             // Start interval for continuous confetti rain (optional)
              state.confettiInterval = setInterval(createConfetti, 2000);
          }, 100); // Small delay
     }
 }
 
 // Handles the logic when the user enters a team code and clicks "Continue"
-function handleContinue() {
+async function handleContinue() {
     const code = state.teamCode ? state.teamCode.trim() : '';
+    state.errorMessage = null; // Clear previous errors
 
-    // Basic validation for the team code format
-    if (code.length !== 4 || isNaN(code)) {
-        alert('请输入4位数字的组队码');
+    if (code.length !== 4 || isNaN(parseInt(code))) {
+        state.errorMessage = '请输入4位数字的组队码';
         return;
     }
 
-    // Check if the team code exists in our simulated data
-    if (state.existingTeams[code]) {
-        // Team exists, retrieve its info and show the confirmation modal
-        state.teamName = state.existingTeams[code].name;
-        state.showConfirmModal = true;
-    } else {
-        // Team does not exist, mark as new team and show the create team modal
-        state.isNewTeam = true;
-        state.showCreateModal = true;
+    state.showLoadingOverlay = true;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/teams/check`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ code }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+             // Handle API errors (e.g., 400 Invalid format, though frontend validates)
+             state.errorMessage = data.error || '检查队伍失败';
+             return;
+        }
+
+        if (data.exists) {
+            // Team exists, update state with fetched info
+            state.teamName = data.name;
+            state.currentTeamMembers = data.members || []; // Update members list
+            state.isNewTeam = false;
+            state.showConfirmModal = true; // Show confirmation modal
+        } else {
+            // Team does not exist, prepare for creation
+            state.teamName = null; // Clear previous team name
+            state.currentTeamMembers = []; // No members yet
+            state.isNewTeam = true;
+            state.showCreateModal = true; // Show create team modal
+        }
+
+    } catch (e) {
+        console.error('API Error checking team:', e);
+        state.errorMessage = '连接服务器失败，请稍后再试。';
+    } finally {
+        state.showLoadingOverlay = false;
     }
 }
 
 // Handles confirming joining an existing team
 function confirmJoinTeam() {
-    // In a real application, you would make an API call here to join the team.
-    // The API would validate if the team is full, etc.
+    // Data (teamName, currentTeamMembers) is already loaded from handleContinue
     state.showConfirmModal = false; // Close the modal
-    state.isNewTeam = false; // Confirming joining an existing team
     showStep(2); // Proceed to the color selection step
 }
 
 // Handles creating a new team
-function createNewTeam() {
+async function createNewTeam() {
+    const code = state.teamCode ? state.teamCode.trim() : '';
     const name = state.newTeamName ? state.newTeamName.trim() : '';
-    // Validate the new team name
+    state.errorMessage = null; // Clear previous errors
+
     if (!name) {
-        alert('请输入队伍名称');
+        state.errorMessage = '请输入队伍名称';
         return;
     }
-    // In a real application, you would make an API call here to create the team.
-    // The API would return confirmation and potentially the team details.
-    state.teamName = name; // Save the new team name
-    // Simulate adding the new team to our local data for subsequent steps
-    state.existingTeams[state.teamCode] = { name: name, members: [] };
-    state.showCreateModal = false; // Close the modal
-    showStep(2); // Proceed to the color selection step
+
+    state.showLoadingOverlay = true;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/teams/create`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ code, name }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+             state.errorMessage = data.error || '创建队伍失败';
+             return;
+        }
+
+        // Team created successfully, update state and proceed
+        state.teamName = data.name; // Use the name returned by API
+        state.currentTeamMembers = []; // Newly created team has no members yet
+        state.showCreateModal = false; // Close the modal
+        showStep(2); // Proceed to the color selection step
+
+    } catch (e) {
+        console.error('API Error creating team:', e);
+        state.errorMessage = '连接服务器失败，请稍后再试。';
+    } finally {
+        state.showLoadingOverlay = false;
+    }
 }
 
 // Handles selecting a color
 function selectColor(color) {
-    // Check if the selected color is already taken by existing members
-    const occupiedColors = currentTeamMembers.value.map(m => m.color);
-    if (occupiedColors.includes(color)) {
-        // This should ideally be prevented by disabling the UI element,
-        // but this check adds robustness.
-        console.warn(`Color ${color} is already taken.`);
-        return; // Do nothing if the color is taken
+    // Frontend check (backend will also validate)
+    if (!isColorDisabled.value(color)) {
+        state.selectedColor = color;
     }
-    state.selectedColor = color; // Update the selected color in state
-}
-
-// Helper function to determine if a color option should be disabled
-function isColorDisabled(color) {
-    const occupiedColors = currentTeamMembers.value.map(m => m.color);
-    return occupiedColors.includes(color);
 }
 
 // Helper function to get the display text for a color ID
@@ -172,7 +189,7 @@ function getColorText(colorId) {
          case 'red': return '红色';
          case 'green': return '绿色';
          case 'blue': return '蓝色';
-         default: return ''; // Handle unknown colors
+         default: return '';
      }
 }
 
@@ -182,125 +199,130 @@ function getColorIcon(colorId) {
          case 'red': return 'flame';
          case 'green': return 'leaf';
          case 'blue': return 'droplets';
-         default: return 'help-circle'; // Default icon for unknown
+         default: return 'help-circle';
      }
 }
 
 // Handles selecting a job
 function selectJob(jobId) {
-    // Check if the selected job is already taken by existing members
-    const occupiedJobs = currentTeamMembers.value.map(m => m.job);
-    const jobType = jobId.replace('job-', ''); // Get the job type ('attacker', 'defender', 'supporter')
-     if (occupiedJobs.includes(jobType)) {
-        // Safeguard
-        console.warn(`Job ${jobType} is already taken.`);
-        return; // Do nothing if the job is taken
+     // Frontend check (backend will also validate)
+     const jobType = jobId.replace('job-', '');
+    if (!isJobDisabled.value(jobType)) {
+        state.selectedJob = jobType; // Store just the type ('attacker')
     }
-    state.selectedJob = jobId; // Update the selected job ID in state
 }
 
-// Helper function to determine if a job option should be disabled
-function isJobDisabled(jobId) {
-    const occupiedJobs = currentTeamMembers.value.map(m => m.job);
-    const jobType = jobId.replace('job-', '');
-    return occupiedJobs.includes(jobType);
-}
-
-// Helper function to get the display text for a job ID
-function getJobText(jobId) {
-     switch(jobId) {
-         case 'job-attacker': return '攻击手';
-         case 'job-defender': return '防御手';
-         case 'job-supporter': return '辅助手';
-         default: return ''; // Handle unknown jobs
+// Helper function to get the display text for a job ID/type
+function getJobText(jobType) {
+     switch(jobType) {
+         case 'attacker': return '攻击手';
+         case 'defender': return '防御手';
+         case 'supporter': return '辅助手';
+         default: return '';
      }
 }
 
-// Helper function to get the Lucide icon name for a job ID
-function getJobIcon(jobId) {
-     switch(jobId) {
-         case 'job-attacker': return 'swords';
-         case 'job-defender': return 'shield';
-         case 'job-supporter': return 'heart-pulse';
-         default: return 'help-circle'; // Default icon for unknown
+// Helper function to get the Lucide icon name for a job ID/type
+function getJobIcon(jobType) {
+     switch(jobType) {
+         case 'attacker': return 'swords';
+         case 'defender': return 'shield';
+         case 'supporter': return 'heart-pulse';
+         default: return 'help-circle';
      }
 }
 
 
 // Handles submitting the personal information form
-function handleSubmitPersonalInfo() {
-    // Basic form validation (using 'required' in template is good, but JS check is also needed)
+async function handleSubmitPersonalInfo() {
+    state.errorMessage = null; // Clear previous errors
+
+    // Basic form validation
     if (!state.maimaiId || !state.nickname || !state.qqNumber || !state.privacyAgreed) {
-        alert('请填写所有必填字段并同意隐私政策');
+        state.errorMessage = '请填写所有必填字段并同意隐私政策';
         return;
     }
+     if (!state.selectedColor || !state.selectedJob) {
+         state.errorMessage = '请选择颜色和职业'; // Should not happen if flow is correct
+         return;
+     }
 
-    state.showLoadingOverlay = true; // Show loading indicator
+    state.showLoadingOverlay = true;
 
-    // Simulate an asynchronous API request to submit the user data
-    setTimeout(() => {
-        console.log("Submitting data:", {
-            teamCode: state.teamCode,
-            teamName: state.teamName,
-            color: state.selectedColor,
-            job: state.selectedJob ? state.selectedJob.replace('job-', '') : null, // Store just the job type
-            maimaiId: state.maimaiId,
-            nickname: state.nickname,
-            qqNumber: state.qqNumber
+    try {
+        const response = await fetch(`${API_BASE_URL}/teams/join`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                teamCode: state.teamCode,
+                color: state.selectedColor,
+                job: state.selectedJob, // Use the stored type
+                maimaiId: state.maimaiId.trim(),
+                nickname: state.nickname.trim(),
+                qqNumber: state.qqNumber.trim(),
+            }),
         });
 
-        // --- Simulate Backend Response ---
-        // In a real app, the backend would process this and return success/failure.
-        // Upon success, the backend would update the database and return the updated team info.
+        const data = await response.json();
 
-        // Simulate adding the new member to the local state for the completion page display
-        // This is purely for frontend demonstration; the real update happens on the backend.
-        if (state.existingTeams[state.teamCode]) {
-             state.existingTeams[state.teamCode].members.push({
-                 color: state.selectedColor,
-                 job: state.selectedJob ? state.selectedJob.replace('job-', '') : null,
-                 nickname: state.nickname
-             });
-        } else {
-            // This case should ideally not happen if the flow is followed, but included for robustness
-             state.existingTeams[state.teamCode] = {
-                 name: state.teamName,
-                 members: [{
-                     color: state.selectedColor,
-                     job: state.selectedJob ? state.selectedJob.replace('job-', '') : null,
-                     nickname: state.nickname
-                 }]
-             };
+        if (!response.ok) {
+             // Handle specific API errors (e.g., 409 Conflict for color/job taken, 404 team not found, 409 team full)
+             state.errorMessage = data.error || '提交信息失败';
+             return;
         }
-        // --- End Simulation ---
 
-        state.showLoadingOverlay = false; // Hide loading indicator
+        // Success! Update state with the final member list from the API
+        state.completionAllMembers = data.members || []; // API should return the updated list
+        state.teamName = data.name; // API should return the team name
         showStep(5); // Proceed to the completion page
 
-    }, 1500); // Simulate network delay
+    } catch (e) {
+        console.error('API Error joining team:', e);
+        state.errorMessage = '连接服务器失败，请稍后再试。';
+    } finally {
+        state.showLoadingOverlay = false;
+    }
 }
 
 // Handles copying the share link to the clipboard
 function copyShareLink() {
-    const shareLinkInput = document.getElementById('shareLink'); // Get the input element
+    const shareLinkInput = document.getElementById('shareLink');
     if (shareLinkInput) {
-        shareLinkInput.select(); // Select the text in the input
-        shareLinkInput.setSelectionRange(0, 99999); // For mobile devices
+        shareLinkInput.select();
+        shareLinkInput.setSelectionRange(0, 99999);
 
         try {
-            // Execute the copy command
-            document.execCommand('copy');
+            navigator.clipboard.writeText(shareLinkInput.value).then(() => {
+                 // Success feedback
+                 const copyBtn = document.getElementById('copyBtn');
+                 if (copyBtn) {
+                    const originalIcon = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalIcon;
+                    }, 2000);
+                 }
+            }).catch(err => {
+                console.error('Failed to copy text using clipboard API: ', err);
+                 // Fallback for older browsers or if clipboard API fails
+                 try {
+                    document.execCommand('copy');
+                     const copyBtn = document.getElementById('copyBtn');
+                     if (copyBtn) {
+                        const originalIcon = copyBtn.innerHTML;
+                        copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = originalIcon;
+                        }, 2000);
+                     }
+                 } catch (execErr) {
+                    console.error('Failed to copy text using execCommand: ', execErr);
+                    alert('复制失败，请手动复制链接。');
+                 }
+            });
 
-            // Optional: Provide visual feedback to the user
-            const copyBtn = document.getElementById('copyBtn');
-             if (copyBtn) {
-                const originalIcon = copyBtn.innerHTML;
-                copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
-                setTimeout(() => {
-                    copyBtn.innerHTML = originalIcon; // Restore original icon after a delay
-                }, 2000);
-             }
-             // alert('链接已复制到剪贴板！'); // Or a more subtle notification
         } catch (err) {
             console.error('Failed to copy text: ', err);
             alert('复制失败，请手动复制链接。');
@@ -310,7 +332,7 @@ function copyShareLink() {
 
 // Handles navigating back to the first step and resetting state
 function goHome() {
-    // Reset all relevant state variables to their initial values
+    // Reset all relevant state variables
     state.teamCode = null;
     state.teamName = null;
     state.isNewTeam = false;
@@ -324,6 +346,9 @@ function goHome() {
     state.showConfirmModal = false;
     state.showCreateModal = false;
     state.showLoadingOverlay = false;
+    state.errorMessage = null;
+    state.currentTeamMembers = [];
+    state.completionAllMembers = [];
 
     // Clear any URL parameters related to the team code
     history.replaceState({}, document.title, window.location.pathname);
@@ -334,35 +359,33 @@ function goHome() {
 // Confetti animation function (can remain mostly as raw JS, triggered by Vue)
 function createConfetti() {
     const celebrationDiv = document.getElementById('celebration');
-    if (!celebrationDiv) return; // Ensure the container exists
+    if (!celebrationDiv) return;
 
-    const confettiCount = 20; // Number of confetti pieces to create per call
-    const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d']; // Array of colors
+    const confettiCount = 20;
+    const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d'];
 
     for (let i = 0; i < confettiCount; i++) {
         const confetti = document.createElement('div');
         confetti.classList.add('confetti');
 
-        // Assign random color, position, size, duration, and delay
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
         confetti.style.backgroundColor = randomColor;
 
         confetti.style.left = Math.random() * 100 + 'vw';
-        confetti.style.top = -20 + 'px'; // Start above the viewport
+        confetti.style.top = -20 + 'px';
 
-        const size = Math.random() * 10 + 5; // Random size between 5px and 15px
+        const size = Math.random() * 10 + 5;
         confetti.style.width = size + 'px';
         confetti.style.height = size + 'px';
 
-        const duration = Math.random() * 3 + 2; // Random animation duration between 2s and 5s
+        const duration = Math.random() * 3 + 2;
         confetti.style.animationDuration = duration + 's';
 
-        const delay = Math.random() * 2; // Random animation delay between 0s and 2s
+        const delay = Math.random() * 2;
         confetti.style.animationDelay = delay + 's';
 
-        celebrationDiv.appendChild(confetti); // Add confetti to the container
+        celebrationDiv.appendChild(confetti);
 
-        // Clean up the confetti element after its animation finishes
         confetti.addEventListener('animationend', () => {
              confetti.remove();
         });
@@ -372,62 +395,61 @@ function createConfetti() {
 
 // --- Lifecycle Hooks ---
 
-// Code to run when the component is mounted to the DOM
 onMounted(() => {
     // Check URL for pre-filled team code when the page loads
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
 
-    if (codeParam && codeParam.length === 4 && !isNaN(codeParam)) {
+    if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
         state.teamCode = codeParam;
-        // Optionally, you could automatically trigger the continue logic here
-        // handleContinue(); // Be cautious with auto-triggering, it might be too fast
+        // Automatically trigger check if code is in URL
+        handleContinue();
     }
 
     // Ensure the correct initial step is displayed
+    // This might be redundant if handleContinue is called, but safe fallback
     showStep(state.currentStep);
 });
 
-// Code to run when the component is unmounted from the DOM
 onUnmounted(() => {
-    // Clean up the confetti animation interval to prevent memory leaks
+    // Clean up the confetti animation interval
     if (state.confettiInterval) {
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
          const celebrationDiv = document.getElementById('celebration');
-         if(celebrationDiv) celebrationDiv.innerHTML = ''; // Also clear any remaining elements
+         if(celebrationDiv) celebrationDiv.innerHTML = '';
     }
 });
 
 </script>
 
 <template>
-    <!-- Root container with background styles -->
-    <!-- Note: In a real Vue app, background styles might be in App.vue or a global CSS file -->
-    <div class="bg-gray-900 text-white min-h-screen flex items-center justify-center px-4 py-8 box-border"
-         style="background-image: url('https://images.unsplash.com/photo-1492684223066-81342ee5ff30?q=80&w=1470'); background-size: cover; background-position: center; background-attachment: fixed;">
+    <!-- Root container with a simple background color -->
+    <div class="bg-gray-900 text-white min-h-screen flex items-center justify-center px-4 py-8 overflow-y-auto">
 
-        <div class="container max-w-md mx-auto">
+        <div class="container max-w-sm mx-auto w-full"> <!-- Increased max-width slightly for better desktop look -->
 
             <!-- Progress Bar (Visible on steps 2-4) -->
-            <!-- Using v-if to conditionally render the progress bar based on step -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
                 <div class="flex justify-between text-xs text-gray-400 mb-2">
                     <span>组队码</span>
-                    <!-- Dynamically apply text color and boldness based on current step -->
                     <span :class="{'text-white font-bold': state.currentStep >= 2}">颜色</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 3}">职业</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 4}">个人信息</span>
                 </div>
                 <div class="progress-bar">
-                    <!-- Progress fill width is bound to the computed property -->
                     <div class="progress-fill" :style="{ width: progressWidth }"></div>
                 </div>
             </div>
 
+            <!-- Error Message Display -->
+            <div v-if="state.errorMessage" class="bg-red-600 bg-opacity-80 text-white text-sm p-3 rounded-lg mb-6 fade-in">
+                {{ state.errorMessage }}
+            </div>
+
+
             <!-- Step 1: Team Code Input -->
-            <!-- Using v-show to toggle visibility without removing from DOM (good for simple toggles) -->
-            <div id="step-team-code" class="glass rounded-3xl p-8 mb-8 fade-in" v-show="state.currentStep === 1">
+            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-show="state.currentStep === 1">
                 <div class="text-center mb-8">
                     <div class="w-24 h-24 bg-purple-600 rounded-full mx-auto flex items-center justify-center mb-4">
                         <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-12 h-12 text-white" alt="Team">
@@ -438,12 +460,10 @@ onUnmounted(() => {
 
                 <div class="mb-8">
                     <label for="teamCode" class="block text-sm font-medium text-purple-300 mb-2">组队码</label>
-                    <!-- v-model binds input value to state.teamCode -->
                     <input type="text" id="teamCode" v-model="state.teamCode" maxlength="4" placeholder="1234" class="input-code w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-4 px-6 text-2xl focus:outline-none focus:ring-2 focus:ring-purple-500">
                     <p class="mt-2 text-xs text-gray-400">请输入四位数字的组队码</p>
                 </div>
 
-                <!-- @click handles button click event -->
                 <button @click="handleContinue" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     继续
                 </button>
@@ -454,9 +474,7 @@ onUnmounted(() => {
             </div>
 
             <!-- Step 2: Color Selection -->
-            <div id="step-color-selection" class="glass rounded-3xl p-8 mb-8" v-show="state.currentStep === 2">
-                 <!-- Progress Bar is handled outside this div -->
-
+            <div id="step-color-selection" class="glass rounded-3xl p-8" v-show="state.currentStep === 2">
                 <div class="text-center mb-8">
                     <h1 class="text-3xl font-bold mb-2">选择你的颜色</h1>
                     <p class="text-purple-300">每个队伍中的成员需要选择不同的颜色</p>
@@ -468,16 +486,14 @@ onUnmounted(() => {
                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
-                            <!-- Display team info from state -->
                             <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ totalMembers }}/3</p>
+                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
                         </div>
                     </div>
                 </div>
 
                 <div class="grid grid-cols-3 gap-4 mb-8">
                     <!-- Color options -->
-                    <!-- Use v-for if colors were dynamic, but static here -->
                     <div class="color-option"
                          id="color-red"
                          :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }"
@@ -512,41 +528,33 @@ onUnmounted(() => {
                 <div class="glass rounded-xl p-4 mb-8">
                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
                     <div class="space-y-3">
-                        <!-- Loop through existing members to display them -->
-                        <div v-for="member in currentTeamMembers" :key="member.nickname + member.color" class="flex items-center">
+                        <div v-for="member in state.currentTeamMembers" :key="member.nickname + member.color" class="flex items-center">
                             <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-4 h-4 text-white" alt="Member">
                             </div>
                             <div>
                                 <p class="font-medium">{{ member.nickname }}</p>
                                 <p class="text-xs text-gray-400">
-                                    <!-- Display color indicator and text -->
                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }} ·
-                                    <!-- Display job icon and text -->
-                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon('job-' + member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText('job-' + member.job)"> {{ getJobText('job-' + member.job) }}
+                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
                                 </p>
                             </div>
                         </div>
-                         <!-- Message if no other members -->
-                         <div v-if="currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm">暂无其他成员</div>
+                         <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm">暂无其他成员</div>
                     </div>
                 </div>
 
-                <!-- Button to proceed to the next step (disabled if no color is selected) -->
                 <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
                 </button>
 
-                <!-- Button to go back to the previous step -->
                 <button @click="showStep(1)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
                     返回
                 </button>
             </div>
 
             <!-- Step 3: Job Selection -->
-            <div id="step-job-selection" class="glass rounded-3xl p-8 mb-8" v-show="state.currentStep === 3">
-                 <!-- Progress Bar is handled outside this div -->
-
+            <div id="step-job-selection" class="glass rounded-3xl p-8" v-show="state.currentStep === 3">
                 <div class="text-center mb-8">
                     <h1 class="text-3xl font-bold mb-2">选择你的职业</h1>
                     <p class="text-purple-300">每个队伍中的成员需要选择不同的职业</p>
@@ -558,9 +566,8 @@ onUnmounted(() => {
                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
-                            <!-- Display team info from state -->
                             <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ totalMembers }}/3</p>
+                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
                         </div>
                     </div>
                 </div>
@@ -568,7 +575,6 @@ onUnmounted(() => {
                  <div class="glass rounded-xl p-4 mb-8">
                     <h3 class="text-sm font-medium mb-3">你的颜色</h3>
                     <div class="flex items-center">
-                        <!-- Display selected color -->
                         <div :class="`color-${state.selectedColor}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
                              <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor)">
                         </div>
@@ -580,7 +586,7 @@ onUnmounted(() => {
                     <!-- Job options -->
                     <div class="job-option"
                          id="job-attacker"
-                         :class="{ selected: state.selectedJob === 'job-attacker', 'disabled-option': isJobDisabled('job-attacker') }"
+                         :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
                          @click="selectJob('job-attacker')">
                         <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center">
                             <img src="https://unpkg.com/lucide-static@latest/icons/swords.svg" class="w-10 h-10 text-white" alt="Attacker">
@@ -590,7 +596,7 @@ onUnmounted(() => {
 
                     <div class="job-option"
                          id="job-defender"
-                         :class="{ selected: state.selectedJob === 'job-defender', 'disabled-option': isJobDisabled('job-defender') }"
+                         :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
                          @click="selectJob('job-defender')">
                         <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center">
                             <img src="https://unpkg.com/lucide-static@latest/icons/shield.svg" class="w-10 h-10 text-white" alt="Defender">
@@ -600,7 +606,7 @@ onUnmounted(() => {
 
                     <div class="job-option"
                          id="job-supporter"
-                         :class="{ selected: state.selectedJob === 'job-supporter', 'disabled-option': isJobDisabled('job-supporter') }"
+                         :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
                          @click="selectJob('job-supporter')">
                         <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center">
                             <img src="https://unpkg.com/lucide-static@latest/icons/heart-pulse.svg" class="w-10 h-10 text-white" alt="Supporter">
@@ -612,8 +618,7 @@ onUnmounted(() => {
                 <div class="glass rounded-xl p-4 mb-8">
                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
                     <div class="space-y-3">
-                        <!-- Loop through existing members -->
-                        <div v-for="member in currentTeamMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
+                        <div v-for="member in state.currentTeamMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
                             <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-4 h-4 text-white" alt="Member">
                             </div>
@@ -621,29 +626,25 @@ onUnmounted(() => {
                                 <p class="font-medium">{{ member.nickname }}</p>
                                 <p class="text-xs text-gray-400">
                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }} ·
-                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon('job-' + member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText('job-' + member.job)"> {{ getJobText('job-' + member.job) }}
+                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
                                 </p>
                             </div>
                         </div>
-                         <div v-if="currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm">暂无其他成员</div>
+                         <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm">暂无其他成员</div>
                     </div>
                 </div>
 
-                <!-- Button to proceed (disabled if no job selected) -->
                 <button @click="showStep(4)" :disabled="!state.selectedJob" :class="{'opacity-50 cursor-not-allowed': !state.selectedJob}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
                 </button>
 
-                <!-- Button to go back -->
                 <button @click="showStep(2)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
                     返回
                 </button>
             </div>
 
             <!-- Step 4: Personal Info -->
-            <div id="step-personal-info" class="glass rounded-3xl p-8 mb-8" v-show="state.currentStep === 4">
-                 <!-- Progress Bar is handled outside this div -->
-
+            <div id="step-personal-info" class="glass rounded-3xl p-8" v-show="state.currentStep === 4">
                 <div class="text-center mb-8">
                     <h1 class="text-3xl font-bold mb-2">个人信息</h1>
                     <p class="text-purple-300">请填写你的个人信息完成注册</p>
@@ -678,44 +679,36 @@ onUnmounted(() => {
                     </div>
                 </div>
 
-                <!-- Personal Info Form -->
-                <!-- @submit.prevent prevents default form submission and calls handleSubmitPersonalInfo -->
                 <form @submit.prevent="handleSubmitPersonalInfo" class="mb-8">
                     <div class="mb-4">
                         <label for="maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID</label>
-                        <!-- v-model binds input to state -->
                         <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
                         <p class="mt-1 text-xs text-gray-400">请输入你的舞萌游戏ID</p>
                     </div>
 
                     <div class="mb-4">
                         <label for="nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼</label>
-                         <!-- v-model binds input to state -->
                         <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：小明" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
                         <p class="mt-1 text-xs text-gray-400">请输入你希望被称呼的名字</p>
                     </div>
 
                     <div class="mb-4">
                         <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号</label>
-                         <!-- v-model binds input to state -->
                         <input type="text" id="qq-number" v-model="state.qqNumber" required placeholder="例如：123456789" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
                         <p class="mt-1 text-xs text-gray-400">用于队伍联系</p>
                     </div>
 
                     <div class="mb-6">
                         <label class="flex items-start">
-                            <!-- v-model binds checkbox checked state to state.privacyAgreed -->
                             <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2">
                             <span class="text-xs text-gray-300">我已阅读并同意<a href="#" class="text-purple-400 hover:underline">隐私政策</a>，并允许收集和使用我的信息用于组队目的。</span>
                         </label>
                     </div>
 
-                    <!-- Submit Button -->
                     <button type="submit" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                         提交
                     </button>
 
-                    <!-- Back Button -->
                     <button type="button" @click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
                         返回
                     </button>
@@ -723,8 +716,7 @@ onUnmounted(() => {
             </div>
 
             <!-- Step 5: Completion Page -->
-            <div id="step-completion" class="glass rounded-3xl p-8 mb-8" v-show="state.currentStep === 5">
-                 <!-- Progress Bar (Completion) is handled outside this div -->
+            <div id="step-completion" class="glass rounded-3xl p-8" v-show="state.currentStep === 5">
                  <div class="mb-8">
                     <div class="flex justify-between text-xs text-gray-400 mb-2">
                         <span>组队码</span>
@@ -749,9 +741,8 @@ onUnmounted(() => {
                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
-                            <!-- Display team info from state -->
                             <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ completionTotalMembers }}/3</p>
+                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ state.completionAllMembers.length }}/3</p>
                         </div>
                     </div>
                 </div>
@@ -759,17 +750,15 @@ onUnmounted(() => {
                 <div class="glass rounded-xl p-4 mb-8">
                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
                     <div class="space-y-3">
-                        <!-- Loop through all members including the new user -->
-                        <div v-for="member in completionAllMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
+                        <div v-for="member in state.completionAllMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
                              <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-4 h-4 text-white" alt="Member">
                             </div>
                             <div>
-                                <p class="font-medium">{{ member.nickname }} <span v-if="member.isCurrentUser">(你)</span></p>
+                                <p class="font-medium">{{ member.nickname }} <span v-if="member.maimai_id === state.maimaiId">(你)</span></p> <!-- Identify current user by maimaiId -->
                                 <p class="text-xs text-gray-400">
                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }} ·
-                                    <!-- Note: member.job here is already the type ('attacker'), not the ID ('job-attacker') -->
-                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon('job-' + member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText('job-' + member.job)"> {{ getJobText('job-' + member.job) }}
+                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
                                 </p>
                             </div>
                         </div>
@@ -781,12 +770,14 @@ onUnmounted(() => {
 
                     <div class="qr-code mb-4">
                         <!-- QR Code Placeholder - In a real app, generate this based on state.teamCode -->
+                         <!-- You could use a library like 'qrcode.vue' here -->
                         <img src="https://unpkg.com/lucide-static@latest/icons/qr-code.svg" class="w-16 h-16 text-black" alt="QR Code">
                     </div>
 
                     <div class="flex mb-4">
                         <!-- Share link input with dynamic value -->
-                        <input type="text" id="shareLink" readonly :value="`register.ngu3rd.mpam-lab.xyz/?code=${state.teamCode}`" class="share-link w-full rounded-l-lg py-3 px-4 text-white focus:outline-none">
+                        <!-- Replace 'your-frontend-domain.com' with your actual domain -->
+                        <input type="text" id="shareLink" readonly :value="`https://your-frontend-domain.com/?code=${state.teamCode}`" class="share-link w-full rounded-l-lg py-3 px-4 text-white focus:outline-none">
                         <!-- Copy button -->
                         <button id="copyBtn" @click="copyShareLink" class="bg-purple-700 hover:bg-purple-600 rounded-r-lg px-4 transition">
                             <img src="https://unpkg.com/lucide-static@latest/icons/copy.svg" class="w-5 h-5 text-white" alt="Copy">
@@ -794,7 +785,7 @@ onUnmounted(() => {
                     </div>
 
                     <div class="flex space-x-2">
-                        <!-- Placeholder share buttons (QQ/WeChat sharing requires specific APIs/methods) -->
+                        <!-- Placeholder share buttons -->
                         <button class="flex-1 flex items-center justify-center bg-blue-500 hover:bg-blue-600 rounded-lg py-2 transition">
                             <img src="https://unpkg.com/lucide-static@latest/icons/message-circle.svg" class="w-5 h-5 text-white mr-2" alt="QQ">
                             <span>QQ</span>
@@ -806,7 +797,6 @@ onUnmounted(() => {
                     </div>
                 </div>
 
-                <!-- Button to return to home/reset -->
                 <button @click="goHome" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
                     返回首页
                 </button>
@@ -814,19 +804,17 @@ onUnmounted(() => {
 
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8">
-                <p>© 2023 MPAM-Lab | register.ngu3rd.mpam-lab.xyz</p>
+                <p>© 2023 MPAM-Lab | your-frontend-domain.com</p> <!-- Update domain -->
             </div>
 
         </div>
 
         <!-- Modals -->
-        <!-- Using v-show to toggle modal visibility -->
-        <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center" v-show="state.showConfirmModal">
-            <div class="glass rounded-2xl p-6 max-w-sm mx-4 fade-in">
+        <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50" v-show="state.showConfirmModal">
+            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in">
                 <h3 class="text-xl font-bold mb-4">确认加入队伍</h3>
-                <p class="mb-6">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍，该队伍目前有 {{ currentTeamMembers.length }} 名成员。</p>
+                <p class="mb-6">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍，该队伍目前有 {{ state.currentTeamMembers.length }} 名成员。</p>
                 <div class="flex space-x-4">
-                    <!-- Buttons to close modal or confirm -->
                     <button @click="state.showConfirmModal = false" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-800 transition">
                         返回修改
                     </button>
@@ -837,17 +825,15 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center" v-show="state.showCreateModal">
-            <div class="glass rounded-2xl p-6 max-w-sm mx-4 fade-in">
+        <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50" v-show="state.showCreateModal">
+            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in">
                 <h3 class="text-xl font-bold mb-4">创建新队伍</h3>
                 <p class="mb-4 text-sm text-gray-300">这个组队码尚未使用，请为你的队伍取个名字</p>
                 <div class="mb-6">
                     <label for="newTeamName" class="block text-sm font-medium text-purple-300 mb-2">队伍名称</label>
-                    <!-- v-model binds input to state.newTeamName -->
                     <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：闪耀星辰" class="w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-3 px-4 focus:outline-none focus:ring-2 focus:ring-purple-500">
                 </div>
                 <div class="flex space-x-4">
-                    <!-- Buttons to close modal or create team -->
                     <button @click="state.showCreateModal = false" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-800 transition">
                         返回
                     </button>
@@ -859,18 +845,20 @@ onUnmounted(() => {
         </div>
 
         <!-- Loading Overlay -->
-        <div class="loading-overlay" v-show="state.showLoadingOverlay">
+        <div class="loading-overlay z-50" v-show="state.showLoadingOverlay">
             <div class="spinner"></div>
-            <p>提交中，请稍候...</p>
+            <p>处理中，请稍候...</p>
         </div>
 
          <!-- Celebration Container (Confetti will be added here by JS) -->
-        <div class="celebration" id="celebration"></div>
+        <div class="celebration z-0" id="celebration"></div>
 
     </div>
 </template>
 
 <style scoped>
+/* Custom styles from previous HTML */
+/* Keeping glass and glow effects */
 .glass {
     background: rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(10px);
@@ -899,7 +887,7 @@ onUnmounted(() => {
 }
 .color-option, .job-option {
     transition: all 0.3s ease;
-    /* Cursor is handled by disabled-option */
+    cursor: pointer; /* Add pointer cursor */
 }
 .color-option:not(.disabled-option):hover, .job-option:not(.disabled-option):hover {
     transform: translateY(-5px);
@@ -931,7 +919,6 @@ onUnmounted(() => {
 }
 .progress-fill {
     height: 100%;
-    /* Width is controlled by inline style binding in template */
     background: linear-gradient(90deg, #a78bfa, #8b5cf6);
     border-radius: 2px;
     transition: width 0.5s ease-in-out;
@@ -1007,7 +994,7 @@ onUnmounted(() => {
     height: 10px;
     /* Background color set by JS */
     animation: confetti 5s ease-in-out infinite;
-    z-index: -1;
+    z-index: -1; /* Behind other content */
 }
 @keyframes confetti {
     0% {
@@ -1042,6 +1029,19 @@ onUnmounted(() => {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: -1;
+    z-index: 0; /* Behind modals, above background */
+}
+
+/* Responsive adjustments */
+/* On screens larger than sm (640px), increase max-width slightly */
+@media (min-width: 640px) {
+    .container {
+        max-width: 28rem; /* Tailwind's max-w-sm is 24rem, max-w-md is 28rem */
+    }
+}
+/* Ensure body doesn't scroll if content is taller than viewport */
+/* The main container has overflow-y-auto */
+html, body {
+    overflow: hidden; /* Prevent body scrolling */
 }
 </style>
