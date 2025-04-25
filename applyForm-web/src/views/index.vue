@@ -871,10 +871,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* Add any custom styles that are not covered by Tailwind utilities here */
-/* Note: Tailwind classes are applied directly in the template */
-
-/* Custom styles from previous HTML */
 .glass {
     background: rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(10px);
