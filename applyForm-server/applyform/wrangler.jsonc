@@ -45,7 +45,7 @@
 	 */
 	"d1_databases": [
 		{
-		"binding": "ngu3rd_signup",
+		"binding": "DB",
 		"database_name": "ngu3rd_signup",
 		"database_id": "7b956247-6532-467e-9e63-48e5bb16f360"
 		}

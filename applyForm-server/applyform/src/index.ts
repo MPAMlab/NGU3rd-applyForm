@@ -5,7 +5,7 @@ const router = Router();
 
 // Define a type for the D1 database binding (adjust if your binding name is different)
 interface Env {
-    DB: ngu3rd_signup;
+    DB: D1Database;
 }
 
 // --- Helper Functions ---
@@ -22,6 +22,11 @@ const apiError = (message: string, status = 400) => error(status, { error: messa
 // Checks if a team code exists and returns basic info
 router.post('/api/teams/check', async (request: Request, env: Env) => {
     try {
+        // 检查请求体是否存在
+        if (!request.body) {
+            return apiError('Request body is required', 400);
+        }
+
         const { code } = await request.json();
 
         if (!code || typeof code !== 'string' || code.length !== 4 || isNaN(parseInt(code))) {
@@ -54,6 +59,11 @@ router.post('/api/teams/check', async (request: Request, env: Env) => {
 
     } catch (e) {
         console.error('Error checking team:', e);
+        console.error('Error details:', {
+            message: e.message,
+            stack: e.stack,
+            name: e.name
+        });
         return apiError('Internal server error.', 500);
     }
 });

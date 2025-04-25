@@ -87,21 +87,23 @@ async function handleContinue() {
     state.showLoadingOverlay = true;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/teams/check`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ code }),
-        });
+    const response = await fetch(`${API_BASE_URL}/teams/check`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        mode: 'cors',
+        credentials: 'omit',
+        body: JSON.stringify({ code }),
+    });
 
-        const data = await response.json();
+    // 检查HTTP状态码
+    if (!response.ok) {
+        console.error('API error:', response.status, response.statusText);
+        throw new Error(`HTTP error! Status: ${response.status}`);
+    }
 
-        if (!response.ok) {
-             // Handle API errors (e.g., 400 Invalid format, though frontend validates)
-             state.errorMessage = data.error || '检查队伍失败';
-             return;
-        }
+    const data = await response.json();
 
         if (data.exists) {
             // Team exists, update state with fetched info
