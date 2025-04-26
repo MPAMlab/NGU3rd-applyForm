@@ -1149,48 +1149,57 @@ onUnmounted(() => {
 
                 <!-- Current Members Box (Compact display) -->
                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                     <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
+                    <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
                     <div class="space-y-3 max-h-32 overflow-y-auto"> <!-- Added max height and overflow -->
-                         <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
-                        <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname /* Better key */" class="flex items-center">
-                             <!-- Avatar or Icon -->
-                             <img
-                                 v-if="member.avatar_url"
-                                 :src="member.avatar_url"
-                                 alt="头像"
-                                 class="rounded-full w-8 h-8 object-cover mr-3 flex-shrink-0 border border-gray-600"
-                                 :class="[`border-${member.color}-500`]"
-                             >
-                             <div
-                                v-else
-                                :class="`color-${member.color}-bg`"
-                                class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
-                              >
-                                <!-- ***************************************************** -->
-                                <!-- 替换这里的 Lucide 颜色图标 -->
-                                <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
-                                <!-- ***************************************************** -->
-                              </div>
+                        <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
+                        <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center justify-between">
+                            <!-- Left side: Avatar/Icon and Details -->
+                            <div class="flex items-center flex-grow mr-2">
+                                <!-- Avatar or Icon -->
+                                <img
+                                    v-if="member.avatar_url"
+                                    :src="member.avatar_url"
+                                    alt="头像"
+                                    class="rounded-full w-8 h-8 object-cover mr-3 flex-shrink-0 border border-gray-600"
+                                    :class="[`border-${member.color}-500`]"
+                                >
+                                <div
+                                    v-else
+                                    :class="`color-${member.color}-bg`"
+                                    class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
+                                >
+                                    <!-- 替换这里的 Lucide 颜色图标 -->
+                                    <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
+                                </div>
 
-                            <div>
-                                <p class="font-medium text-sm">{{ member.nickname }}</p>
-                                <p class="text-xs text-gray-300 flex items-center flex-wrap">
-                                     <span class="flex items-center mr-2">
-                                         <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
-                                     </span>
-                                    <span class="flex items-center">
-                                         <!-- ***************************************************** -->
-                                         <!-- 替换这里的 Lucide 职业图标 -->
-                                        <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                         <!-- ***************************************************** -->
-                                        {{ getJobText(member.job) }}
-                                    </span>
-                                </p>
+                                <div>
+                                    <p class="font-medium text-sm">{{ member.nickname }}</p>
+                                    <p class="text-xs text-gray-300 flex items-center flex-wrap">
+                                        <span class="flex items-center mr-2">
+                                            <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
+                                        </span>
+                                        <span class="flex items-center">
+                                            <!-- 替换这里的 Lucide 职业图标 -->
+                                            <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                            {{ getJobText(member.job) }}
+                                        </span>
+                                    </p>
+                                </div>
                             </div>
+                            
+                            <!-- Right side: Edit Button (only if maimai_id exists) -->
+                            <button
+                                v-if="member.maimai_id"
+                                type="button"
+                                @click="openEditModal(member.maimai_id)"
+                                class="flex-shrink-0 ml-auto px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded-md text-xs font-medium text-white transition-colors"
+                                aria-label="修改此报名信息"
+                            >
+                                修改
+                            </button>
                         </div>
                     </div>
                 </div>
-
                 <!-- Navigation Buttons -->
                  <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
