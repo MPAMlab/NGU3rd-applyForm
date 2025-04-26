@@ -2,11 +2,13 @@
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
-{
+ {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "applyform",
+	"name": "applyform", // Or change this back to "l1nker-server" if that's the correct name
 	"main": "src/index.ts",
-	"compatibility_date": "2025-04-25",
+	"compatibility_date": "2025-04-25", // Consider updating this to match your TOML example's date if needed, or keep it current
+	// "compatibility_flags": ["nodejs_compat"], // Add this if you need Node.js compatibility, matching your TOML
+
 	"observability": {
 		"enabled": true
 	},
@@ -49,5 +51,17 @@
 		"database_name": "ngu3rd_signup",
 		"database_id": "7b956247-6532-467e-9e63-48e5bb16f360"
 		}
+	], // <-- Add a comma here if 'routes' is not the last property
+
+	/**
+	 * Routes
+	 * Define patterns to trigger this Worker.
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#routes
+	 */
+	"routes": [
+		{ "pattern": "signup.ngu3rd.mpam-lab.xyz/api/*", "zone_name": "mpam-lab.xyz" }
+		// You can add more route objects here, separated by commas:
+		// { "pattern": "another-pattern.example.com/*", "zone_id": "YOUR_ZONE_ID" }
 	]
+	// If you add more top-level properties after 'routes', add a comma after the closing bracket ']'
 }

@@ -14,7 +14,17 @@ interface Env {
 const apiResponse = (data: any, status = 200) => json(data, { status });
 
 // Standardize error response
-const apiError = (message: string, status = 400) => error(status, { error: message });
+const apiError = (message: string, status = 400) => {
+    return json({ error: message }, { 
+        status,
+        headers: {
+            // 即使在错误响应中也添加 CORS 头
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        }
+    });
+};
 
 // --- API Endpoints ---
 
@@ -27,7 +37,14 @@ router.post('/api/teams/check', async (request: Request, env: Env) => {
             return apiError('Request body is required', 400);
         }
 
-        const { code } = await request.json();
+        let data;
+        try {
+            data = await request.json();
+        } catch (e) {
+            return apiError('Invalid JSON in request body', 400);
+        }
+
+        const { code } = data;
 
         if (!code || typeof code !== 'string' || code.length !== 4 || isNaN(parseInt(code))) {
             return apiError('Invalid team code format.', 400);
@@ -59,11 +76,6 @@ router.post('/api/teams/check', async (request: Request, env: Env) => {
 
     } catch (e) {
         console.error('Error checking team:', e);
-        console.error('Error details:', {
-            message: e.message,
-            stack: e.stack,
-            name: e.name
-        });
         return apiError('Internal server error.', 500);
     }
 });
@@ -261,27 +273,48 @@ router.all('*', () => apiError('Not Found.', 404));
 // Entry point for the Worker
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-        // Handle CORS preflight requests (OPTIONS)
-        if (request.method === 'OPTIONS') {
-            return new Response(null, {
-                status: 204,
-                headers: {
-                    'Access-Control-Allow-Origin': '*', // Allow requests from any origin (adjust in production)
-                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type',
-                    'Access-Control-Max-Age': '86400', // Cache preflight for 24 hours
-                },
-            });
-        }
-
-        // Route the request and add CORS headers to the response
+      // 处理 OPTIONS 请求
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '86400',
+          },
+        });
+      }
+  
+      try {
+        // 路由请求
         const response = await router.handle(request, env, ctx);
-
-        // Add CORS headers to actual responses
-        response.headers.set('Access-Control-Allow-Origin', '*'); // Allow requests from any origin (adjust in production)
-        response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS'); // Add methods used
-        response.headers.set('Access-Control-Allow-Headers', 'Content-Type'); // Add headers used
-
+        
+        // 添加 CORS 头到响应
+        response.headers.set('Access-Control-Allow-Origin', '*');
+        response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        response.headers.set('Access-Control-Allow-Headers', 'Content-Type');
+        
         return response;
+      } catch (error) {
+        // 错误处理 - 确保错误响应也有 CORS 头
+        console.error('Unhandled error:', error);
+        
+        // 创建错误响应
+        const errorResponse = new Response(
+          JSON.stringify({ error: 'Internal Server Error' }),
+          { 
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+              'Access-Control-Allow-Headers': 'Content-Type'
+            }
+          }
+        );
+        
+        return errorResponse;
+      }
     },
-};
+  };
