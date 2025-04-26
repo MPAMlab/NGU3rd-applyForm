@@ -55,6 +55,10 @@ const state = reactive({
     confettiInterval: null, // To store interval ID for cleanup
 });
 
+// Reference for the main container to attach background triangles
+const mainContainerRef = ref(null);
+let trianglesContainer = null; // Reference to the dynamically created triangles container
+
 // --- Computed Properties ---
 const progressWidth = computed(() => {
     const stepProgress = { 1: 0, 2: 25, 3: 50, 4: 75, 5: 100 };
@@ -146,7 +150,7 @@ async function handleContinue() {
             body: JSON.stringify({ code }),
         });
 
-        const data = await response.json(); // 总是尝试解析 JSON，即使是非 2xx 响应
+        const data = await response.json(); // 总是尝试解析 JSON, 即使是非 2xx 响应
 
         if (!response.ok) {
             // 如果状态码不是成功 (2xx)
@@ -250,7 +254,6 @@ function getColorText(colorId) {
      return map[colorId] || '';
 }
 
-// *****************************************************
 // --- 替换图标逻辑 ---
 // 创建一个新的函数来根据类型和值获取本地 SVG 路径
 function getIconPath(type, value) {
@@ -269,7 +272,6 @@ function getIconPath(type, value) {
     return paths[type]?.[value] || ''; // 如果找不到路径，返回空字符串，避免无效 src
 }
 // --- 结束替换图标逻辑 ---
-// *****************************************************
 
 // 选择职业
 function selectJob(jobId) {
@@ -550,7 +552,7 @@ function goHome() {
      }, 50);
 }
 
-// Confetti 动画
+// Confetti 动画 (kept as is from original Vue code)
 function createConfetti() {
     const celebrationDiv = document.getElementById('celebration');
     if (!celebrationDiv) return;
@@ -598,7 +600,89 @@ function createConfetti() {
     }
 }
 
-// --- Edit/Delete Modal Functions ---
+// --- Dynamic Triangle Background Logic ---
+function createDynamicBackground() {
+     if (!mainContainerRef.value) {
+         console.error("Main container ref is not available.");
+         return;
+     }
+
+     // Create the container for triangles if it doesn't exist
+     if (!trianglesContainer) {
+         trianglesContainer = document.createElement('div');
+         trianglesContainer.id = 'triangle-background';
+         trianglesContainer.classList.add('dynamic-background-container'); // Add CSS class for styling
+          // Insert it as the first child of the main container to keep content above
+         mainContainerRef.value.insertBefore(trianglesContainer, mainContainerRef.value.firstChild);
+         console.log("Created and inserted triangle background container.");
+     } else {
+          // Clear existing triangles if any before repopulating (e.g., on hot update)
+          trianglesContainer.innerHTML = '';
+     }
+
+     // Define theme colors for triangles (purples, indigos, grays)
+     // These hex codes roughly match the Tailwind theme used elsewhere in the component
+     const themeColors = ['#a78bfa', '#8b5cf6', '#6d28d9', '#4f46e5', '#4338ca', '#334155', '#94a3b8']; // purple-400 to violet-700, indigo-600/700, slate-700/400
+
+     const triangleCount = 60; // Slightly more triangles for density
+     const rootHeight = mainContainerRef.value.offsetHeight; // Get actual height
+     const rootWidth = mainContainerRef.value.offsetWidth; // Get actual width
+
+     for (let i = 0; i < triangleCount; i++) {
+         const triangle = document.createElement('div');
+         triangle.classList.add('dynamic-triangle'); // Add specific triangle class
+
+         // Random size (border-top will be this size, border-left/right half)
+         const size = Math.random() * 100 + 40; // Size between 40px and 140px
+
+         const randomColor = themeColors[Math.floor(Math.random() * themeColors.length)];
+
+         // Create a downward-pointing triangle using border-top
+         triangle.style.width = '0';
+         triangle.style.height = '0';
+         triangle.style.borderLeft = `${size / 2}px solid transparent`;
+         triangle.style.borderRight = `${size / 2}px solid transparent`;
+         triangle.style.borderTop = `${size}px solid ${randomColor}`;
+         triangle.style.opacity = Math.random() * 0.1 + 0.05; // Random opacity (0.05 to 0.15) - Make them very subtle
+
+         // Set initial position (start off-screen above or slightly on screen)
+         // Position using absolute left/top relative to the fixed container
+         triangle.style.position = 'absolute';
+          // Random horizontal position (ensure they don't clip off edge too much)
+         const left = Math.random() * 100; // 0% to 100%
+         triangle.style.left = `${left}%`;
+          // Start position using a CSS variable, so animation can use it
+         const startYrem = (Math.random() * -20) - 10; // -10rem to -30rem (Negative means off-screen top) Adjust units if not using rem
+         triangle.style.top = `0`; // Anchor to top
+         triangle.style.setProperty('--start-y', `${startYrem}rem`); // Custom property for start Y translate
+         triangle.style.setProperty('--end-y', `${(rootHeight / 16 / (size/16)) + 10}rem`); // Custom property for end Y translate (approx based on size)
+
+         // Random animation duration and delay
+         const duration = Math.random() * 30 + 15; // 15s to 45s
+         const delay = Math.random() * 20; // 0s to 20s
+
+         triangle.style.animationDuration = `${duration}s`;
+         triangle.style.animationDelay = `${delay}s`;
+         triangle.style.animationIterationCount = 'infinite'; // Loop animation
+         triangle.style.animationTimingFunction = 'linear'; // Consistent speed
+          triangle.style.animationName = 'triangle-fall-theme'; // Use a different animation name
+          triangle.style.zIndex = 0; // Ensure behind content
+
+         trianglesContainer.appendChild(triangle);
+     }
+     console.log(`Generated ${triangleCount} triangles.`);
+}
+
+function cleanupDynamicBackground() {
+    if (trianglesContainer && mainContainerRef.value) {
+        // A safe way to remove the container and all its children
+        mainContainerRef.value.removeChild(trianglesContainer);
+        trianglesContainer = null; // Clear the reference
+        console.log("Cleaned up triangle background container.");
+    }
+}
+
+// --- Edit/Delete Modal Functions --- (Keeping the original modal logic as it was already included and functional)
 
 // 打开修改信息模态框
 // Accepts an optional maimaiId to pre-fill the authentication field
@@ -744,8 +828,7 @@ async function saveChanges() {
         // Append only the fields that the user has potentially changed or filled
         // Only append if the value is NOT null or an empty string after trim() - except for color/job where empty string signifies no change.
         // For color/job, only append if a specific value OTHER THAN '' is selected.
-        if (state.editNewNickname !== null) formData.append('nickname', state.editNewNickname.trim()); // Allow empty string to clear nickname if backend supports? No, backend requires it. Trim and check against original if available. Let's revert to only appending if not null/empty.
-         if (state.editNewNickname !== null && state.editNewNickname.trim() !== '') formData.append('nickname', state.editNewNickname.trim()); // Only append if user provided a non-empty new nickname
+        if (state.editNewNickname !== null && state.editNewNickname.trim() !== '') formData.append('nickname', state.editNewNickname.trim()); // Only append if user provided a non-empty new nickname
          if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '') formData.append('qqNumber', state.editNewQqNumber.trim()); // Only append if user provided a non-empty new qq number
          if (state.editNewColor !== null && state.editNewColor !== '') formData.append('color', state.editNewColor); // Append if a specific color is selected
          if (state.editNewJob !== null && state.editNewJob !== '') formData.append('job', state.editNewJob); // Append if a specific job is selected
@@ -804,8 +887,6 @@ async function saveChanges() {
                      console.log("Updated member in completionAllMembers array.");
                  } else {
                     console.warn("Updated member not found in completionAllMembers array after PATCH.");
-                    // Fallback: If Step 5 list can't be updated directly, maybe re-fetch team data?
-                    // await fetchTeamData(state.teamCode); // Need a separate function for this
                  }
 
                  // Also update the members list in the confirmation modal state (`currentTeamMembers`)
@@ -976,6 +1057,9 @@ async function deleteEntry() {
 // --- Lifecycle Hooks ---
 
 onMounted(() => {
+    // Create the dynamic background triangles when the component mounts
+     createDynamicBackground(); // Call the function to generate triangles
+
     // 页面加载时检查 URL 是否有组队码
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
@@ -990,9 +1074,13 @@ onMounted(() => {
        showStep(state.currentStep); // Ensure initial step is shown
     }
 
-    // PC Centering Debug: The flex and mx-auto should center on most setups
-    // If not centered, check global CSS for html, body, #app
-    // especially 'height', 'min-height', 'display', 'justify-content', 'align-items'
+    // Optional: Adjust triangle position on resize if needed.
+    // The current implementation uses percentage left and translateY based on rem,
+    // which is somewhat responsive, but explicit resize handling might improve it.
+    // However, given the simple animation, this might not be strictly required
+    // if the container is properly sized relative to the viewport.
+    // If issues arise on resize, consider adding a resize observer here
+    // to potentially regenerate or reposition triangles. For now, skip explicit resize handler.
 });
 
 onUnmounted(() => {
@@ -1012,32 +1100,33 @@ onUnmounted(() => {
      if (state.editNewAvatarPreviewUrl) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
     }
+
+    // Clean up the dynamic background triangles
+     cleanupDynamicBackground(); // Call the function to remove container and triangles
 });
 
 </script>
 
 <template>
     <!-- Root container using flexbox for centering -->
-    <!-- Added more responsive padding and ensured full height -->
+    <!-- Added more responsive padding, ensured full height, used ref for background -->
     <!-- Removed overflow-hidden from root to allow modal scroll if needed, added to confetti container -->
-    
-    <div class="bg-gray-900 text-white min-h-screen relative overflow-x-hidden">
-         <!-- Title Image Container (Absolute positioned at top, full width, hide overflow) -->
-    <!-- flex justify-center centers the img element horizontally within this div -->
-    <!-- z-index 0 places it behind main content (z-10) -->
-    <div class="absolute top-0 left-0 w-full overflow-hidden flex justify-center z-0">
-         <!-- Add your image tag here -->
-         <!-- Use a class like 'title-banner-img' for specific styling -->
-         <img src="/title.png" alt="NGU Tournament Title Banner" class="title-banner-img">
-         <!-- Change src="/path/to/your/title-image.jpg" to the actual path of your image -->
-    </div>
+    <!-- Added position: relative here to make absolute children position relative to this -->
+    <div ref="mainContainerRef" class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative overflow-hidden"> {/* Added overflow-hidden */}
 
-    <!-- Main Content Area (Needs top padding to push content below the absolute banner) -->
-    <!-- Find this div and modify its padding -->
-    
+        <!-- Dynamic Triangle Background Container - Position absolute, z-index 0 -->
+        <!-- This container is created and managed by the JS code in createDynamicBackground -->
+        <!-- It needs to be the first child of the mainContainerRef element to be behind everything -->
+        <!-- A placeholder div is NOT needed here, as the JS creates it. -->
+        <!-- The CSS below targets the .dynamic-background-container class -->
+
+        <!-- Celebration Container (Lower z-index so content is above) -->
+        <div class="celebration z-0" id="celebration"></div>
+
         <!-- Main Content Container, centered with max-width -->
-        <div class="w-full max-w-md mx-auto pt-32 py-8 sm:px-6 lg:px-8 relative z-10"> <!-- Content should be above confetti -->
-            
+        <!-- Ensure z-index is higher than the background triangles (z-index: 10 > z-index: 0) -->
+        <div class="w-full max-w-md mx-auto relative z-10">
+
             <!-- Progress Bar (Visible in steps 2-4) -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
@@ -1129,10 +1218,8 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }"
                          @click="selectColor('red')" @keydown.enter="selectColor('red')" @keydown.space="selectColor('red')">
                         <div class="color-red-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
-                             <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
                              <img :src="getIconPath('color', 'red')" class="w-12 h-12 text-white" :alt="getColorText('red') + '图标'">
-                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('red') }}</p>
                     </div>
@@ -1140,10 +1227,8 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }"
                          @click="selectColor('green')" @keydown.enter="selectColor('green')" @keydown.space="selectColor('green')">
                         <div class="color-green-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
-                             <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
                              <img :src="getIconPath('color', 'green')" class="w-12 h-12 text-white" :alt="getColorText('green') + '图标'">
-                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('green') }}</p>
                     </div>
@@ -1151,10 +1236,8 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }"
                          @click="selectColor('blue')" @keydown.enter="selectColor('blue')" @keydown.space="selectColor('blue')">
                         <div class="color-blue-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
-                             <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
                              <img :src="getIconPath('color', 'blue')" class="w-12 h-12 text-white" :alt="getColorText('blue') + '图标'">
-                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('blue') }}</p>
                     </div>
@@ -1199,7 +1282,7 @@ onUnmounted(() => {
                                     </p>
                                 </div>
                             </div>
-                            
+
                             <!-- Right side: Edit Button (only if maimai_id exists) -->
                             <button
                                 v-if="member.maimai_id"
@@ -1245,13 +1328,11 @@ onUnmounted(() => {
                          </div>
                          <!-- Selected Color Display -->
                          <div class="flex items-center glass rounded-full px-3 py-1 border border-gray-600 flex-shrink-0">
-                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full w-5 h-5 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm">
-                                <!-- ***************************************************** -->
+                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex items-center justify-center mr-2 flex-shrink-0 shadow-sm">
                                 <!-- 替换这里的 Lucide 颜色图标 -->
-                                <img :src="getIconPath('color', state.selectedColor)" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor) + '图标'">
-                                <!-- ***************************************************** -->
-                            </div>
-                            <span class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</span>
+                                 <img :src="getIconPath('color', state.selectedColor)" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor) + '图标'">
+                             </div>
+                             <p class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</p>
                         </div>
                     </div>
                 </div>
@@ -1262,10 +1343,8 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
                          @click="selectJob('job-attacker');" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
                          <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                             <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 职业图标 -->
                              <img :src="getIconPath('job', 'attacker')" class="w-12 h-12 text-white" :alt="getJobText('attacker') + '图标'">
-                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('attacker') }}</p>
                     </div>
@@ -1273,10 +1352,8 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
                          @click="selectJob('job-defender')" @keydown.enter="selectJob('job-defender')" @keydown.space="selectJob('job-defender')">
                          <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                             <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 职业图标 -->
                              <img :src="getIconPath('job', 'defender')" class="w-12 h-12 text-white" :alt="getJobText('defender') + '图标'">
-                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('defender') }}</p>
                     </div>
@@ -1284,10 +1361,8 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
                          @click="selectJob('job-supporter')" @keydown.enter="selectJob('job-supporter')" @keydown.space="selectJob('job-supporter')">
                         <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                            <!-- ***************************************************** -->
                             <!-- 替换这里的 Lucide 职业图标 -->
                             <img :src="getIconPath('job', 'supporter')" class="w-12 h-12 text-white" :alt="getJobText('supporter') + '图标'">
-                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('supporter') }}</p>
                     </div>
@@ -1312,10 +1387,8 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
                               >
-                                 <!-- ***************************************************** -->
                                  <!-- 替换这里的 Lucide 颜色图标 -->
                                 <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
-                                 <!-- ***************************************************** -->
                               </div>
 
                             <div>
@@ -1325,10 +1398,8 @@ onUnmounted(() => {
                                          <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
                                      </span>
                                     <span class="flex items-center">
-                                         <!-- ***************************************************** -->
                                          <!-- 替换这里的 Lucide 职业图标 -->
                                          <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                         <!-- ***************************************************** -->
                                         {{ getJobText(member.job) }}
                                     </span>
                                 </p>
@@ -1369,21 +1440,17 @@ onUnmounted(() => {
                         </div>
                          <!-- Color -->
                          <div class="text-center flex flex-col items-center">
-                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex-shrink-0">
-                                <!-- ***************************************************** -->
+                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex items-center justify-center flex-shrink-0 shadow-sm">
                                 <!-- 替换这里的 Lucide 颜色图标 -->
                                  <img :src="getIconPath('color', state.selectedColor)" class="w-5 h-5 text-white" :alt="getColorText(state.selectedColor) + '图标'">
-                                 <!-- ***************************************************** -->
                              </div>
                              <p class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</p>
                         </div>
                          <!-- Job -->
                          <div class="text-center flex flex-col items-center">
-                            <div :class="`job-${state.selectedJob}-bg`" class="rounded-full p-2 mb-1 shadow-md job-summary-shadow flex-shrink-0">
-                                <!-- ***************************************************** -->
+                            <div :class="`job-${state.selectedJob}-bg`" class="rounded-full p-2 mb-1 shadow-md job-summary-shadow flex items-center justify-center flex-shrink-0 shadow-sm">
                                 <!-- 替换这里的 Lucide 职业图标 -->
                                 <img :src="getIconPath('job', state.selectedJob)" class="w-5 h-5 text-white" :alt="getJobText(state.selectedJob) + '图标'">
-                                <!-- ***************************************************** -->
                             </div>
                              <p class="text-xs font-medium text-gray-200">{{ getJobText(state.selectedJob) || '职业' }}</p>
                         </div>
@@ -1448,7 +1515,7 @@ onUnmounted(() => {
                          {{ state.showLoadingOverlay ? '正在完成...' : '完成注册' }}
                     </button>
 
-                    <button type="button" @click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                    <button type="button" @Click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                         返回
                     </button>
                 </form>
@@ -1515,10 +1582,8 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-10 h-10 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border-2 border-gray-600"
                               >
-                                <!-- ***************************************************** -->
-                                <!-- 替换这里的 Lucide 颜色图标 -->
+                                 <!-- 替换这里的 Lucide 颜色图标 -->
                                 <img :src="getIconPath('color', member.color)" class="w-5 h-5 text-white" :alt="getColorText(member.color) + '图标'">
-                                <!-- ***************************************************** -->
                               </div>
 
                              <!-- Member Details -->
@@ -1527,7 +1592,7 @@ onUnmounted(() => {
                                  <!-- Check against both maimai_id (from DB) and maimaiId (from user input state) -->
                                 <p class="font-medium text-sm flex items-center">
                                     {{ member.nickname }}
-                                    <span v-if="(member.maimai_id || member.maimaiId) === state.maimaiId" class="ml-2 text-xs bg-purple-600 px-1.5 py-0.5 rounded text-white font-bold">你</span>
+                                    <span v-if="(member.maimai_id || member.maimaiId)?.toString() === state.maimaiId?.toString()" class="ml-2 text-xs bg-purple-600 px-1.5 py-0.5 rounded text-white font-bold">你</span>
                                 </p>
                                 <p class="text-xs text-gray-300 flex items-center flex-wrap">
                                     <span class="flex items-center mr-2">
@@ -1535,10 +1600,8 @@ onUnmounted(() => {
                                         {{ getColorText(member.color) }}
                                     </span>
                                     <span class="flex items-center">
-                                         <!-- ***************************************************** -->
                                          <!-- 替换这里的 Lucide 职业图标 -->
                                          <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                         <!-- ***************************************************** -->
                                         {{ getJobText(member.job) }}
                                     </span>
                                 </p>
@@ -1578,7 +1641,7 @@ onUnmounted(() => {
                          <div v-else class="w-[140px] h-[140px] bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 text-xs">
                             生成中...
                         </div>
-                     </div>
+                    </div>
 
                      <!-- Share Link Input & Copy Button -->
                      <div class="flex mb-4 mt-4">
@@ -1620,7 +1683,7 @@ onUnmounted(() => {
                  <p>© {{ new Date().getFullYear() }} NGU Team © {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
             </div>
 
-        </div> <!-- End of Container -->
+        </div> <!-- End of Main Container ref="mainContainerRef" -->
 
         <!-- Modals -->
         <!-- Confirm Join Modal (Updated with Edit Button in Member List) -->
@@ -1649,10 +1712,8 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-6 h-6 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm border border-gray-600"
                               >
-                                 <!-- ***************************************************** -->
                                  <!-- 替换这里的 Lucide 颜色图标 -->
                                 <img :src="getIconPath('color', member.color)" class="w-3 h-3 text-white" :alt="getColorText(member.color) + '图标'">
-                                 <!-- ***************************************************** -->
                               </div>
                              <!-- Name and Details -->
                              <span class="text-gray-300 flex-grow">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
@@ -1797,12 +1858,10 @@ onUnmounted(() => {
                         <select id="edit-color" v-model="state.editNewColor" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
                              <option value="">-- 留空不修改 --</option>
                              <!-- Use computed property for disabled status -->
-                            <!-- ***************************************************** -->
-                             <!-- 这里不需要图标，直接使用文本 -->
+                            <!-- 这里不需要图标，直接使用文本 -->
                             <option value="red" :disabled="isColorDisabled('red')" :class="{'opacity-50': isColorDisabled('red')}">{{ getColorText('red') }}</option>
                             <option value="green" :disabled="isColorDisabled('green')" :class="{'opacity-50': isColorDisabled('green')}">{{ getColorText('green') }}</option>
                             <option value="blue" :disabled="isColorDisabled('blue')" :class="{'opacity-50': isColorDisabled('blue')}">{{ getColorText('blue') }}</option>
-                             <!-- ***************************************************** -->
                         </select>
                     </div>
 
@@ -1811,12 +1870,10 @@ onUnmounted(() => {
                         <select id="edit-job" v-model="state.editNewJob" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
                              <option value="">-- 留空不修改 --</option>
                              <!-- Use computed property for disabled status -->
-                             <!-- ***************************************************** -->
                              <!-- 这里不需要图标，直接使用文本 -->
                              <option value="attacker" :disabled="isJobDisabled('attacker')" :class="{'opacity-50': isJobDisabled('attacker')}">{{ getJobText('attacker') }}</option>
                             <option value="defender" :disabled="isJobDisabled('defender')" :class="{'opacity-50': isJobDisabled('defender')}">{{ getJobText('defender') }}</option>
                             <option value="supporter" :disabled="isJobDisabled('supporter')" :class="{'opacity-50': isJobDisabled('supporter')}">{{ getJobText('supporter') }}</option>
-                             <!-- ***************************************************** -->
                         </select>
                     </div>
                  </div>
@@ -1863,9 +1920,6 @@ onUnmounted(() => {
                  {{ state.errorMessage ? state.errorMessage : '处理中，请稍候...' }}
             </p>
         </div>
-
-         <!-- Celebration Container (Lower z-index so content is above) -->
-        <div class="celebration z-0" id="celebration"></div>
 </template>
 
 <style scoped>
@@ -2019,19 +2073,6 @@ onUnmounted(() => {
     box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3); /* Purple glow on focus */
     outline: none; /* Remove default outline */
 }
-.title-banner-img {
-    display: block;
-    height: 12rem; /* Adjust this height as needed */
-    width: auto;
-    max-width: none;
-    min-width: 100%;
-    /* The parent flex justify-center handles horizontal centering */
-}
-@media (max-width: 640px) {
-    .title-banner-img {
-        height: 8rem; /* Smaller height on mobile */
-    }
-}
 /* Style checkbox */
 input[type="checkbox"] {
   appearance: none;
@@ -2105,7 +2146,7 @@ input[type="checkbox"].text-red-600:checked {
 select.form-input {
     /* Add custom styling for dropdown arrow if appearance: none; is used */
     /* NOTE: This uses hardcoded SVG path (likely Lucide source) - keeping as per original */
-    background-image: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="6 9 12 15 18 9"%3E%3C/polyline%3E%3C/svg%3E');
+    background-image: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="6 9 12 15 18 9"%3E%3Cpolyline%3E%3C/svg%3E');
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
     background-size: 1em auto;
@@ -2140,14 +2181,14 @@ select.form-input {
     to { transform: rotate(360deg); }
 }
 
-/* Confetti Styles */
+/* Confetti Styles (kept as is) */
 .confetti {
     position: fixed;
     /* width/height/color/animation set by JS */
     animation-name: confetti-fall; /* Explicitly name the animation */
     animation-timing-function: linear;
     animation-iteration-count: infinite; /* Make it continuous unless cleared */
-    z-index: 1; /* Above background, below content */
+    z-index: 1; /* Above background triangles, below content */
     border-radius: 2px;
     /* mix-blend-mode: screen; Consider removing or adjusting based on desired effect */
     opacity: 0.8; /* Slightly less opaque */
@@ -2175,9 +2216,46 @@ select.form-input {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: 0; /* Ensure confetti is behind everything else */
+    z-index: 0; /* Ensure confetti is behind everything else but above triangles */
     overflow: hidden; /* Prevent scrollbars caused by confetti */
     pointer-events: none; /* Do not capture mouse events */
+}
+
+/* --- Dynamic Triangle Background Styles (Modified from original HTML) --- */
+.dynamic-background-container {
+    position: absolute;
+    inset: 0; /* top, right, bottom, left = 0 */
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allow clicks to pass through */
+    z-index: 0; /* Place below main content and modals (z-10, z-50) */
+    overflow: hidden; /* Hide triangles that float outside */
+}
+
+.dynamic-triangle {
+    position: absolute;
+    /* size, color, opacity set by JS */
+    /* shape set by border properties in JS */
+    /* left position set by JS */
+    top: 0; /* Anchor to the top */
+    animation-name: triangle-fall-theme; /* Use a custom animation name to avoid conflicts */
+    /* animation-duration, animation-delay, animation-iteration-count, animation-timing-function set by JS */
+    /* z-index is set by JS */
+}
+
+/* Keyframes for dynamic triangles */
+/* Modified to float downwards, themed colors handled by JS */
+@keyframes triangle-fall-theme {
+    0% {
+        /* Start slightly off-screen or at the top, potentially scaled/rotated differently */
+        transform: translateY(var(--start-y, -20rem)) rotate(0deg) scale(0.8);
+        opacity: var(--start-opacity, 0.6); /* Optional: fade in */
+    }
+    100% {
+        /* Fall far off-screen bottom, rotate, potentially scale differently */
+        transform: translateY(var(--end-y, 120rem)) rotate(360deg) scale(1.2);
+        opacity: var(--end-opacity, 0); /* Fade out */
+    }
 }
 
 /* QR Code & Share Link */
@@ -2217,17 +2295,8 @@ select.form-input {
 .border-green-500 { border-color: #22c55e; }
 .border-blue-500 { border-color: #3b82f6; }
 
-/* Remove default body margin/padding if necessary */
-/* html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    width: 100%;
-    overflow-x: hidden;
-} */
-/* Ensure root element takes up full height */
-/* #app {
-    height: 100%;
-    width: 100%;
-} */
+/* Optional: Define the height of the root HTML/Body/App element if needed
+   to ensure min-h-screen works correctly in all environments */
+/* html, body, #app { height: 100%; } */
+
 </style>
