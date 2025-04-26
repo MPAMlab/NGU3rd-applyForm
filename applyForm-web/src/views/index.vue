@@ -1762,8 +1762,6 @@ onUnmounted(() => {
 
          <!-- Celebration Container (Lower z-index so content is above) -->
         <div class="celebration z-0" id="celebration"></div>
-
-    </div> <!-- End of Root Container -->
 </template>
 
 <style scoped>
