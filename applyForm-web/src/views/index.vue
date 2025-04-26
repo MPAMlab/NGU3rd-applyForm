@@ -1136,11 +1136,11 @@ onUnmounted(() => {
             </div>
 
             <!-- Step 2: Color Selection -->
-            <div id="step-color-selection" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 2">
+            <div id="step-color-selection" class="glass rounded-3xl p-4 sm:p-6 md:p-8 fade-in" v-if="state.currentStep === 2">
                 <!-- Header -->
                 <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold mb-2">选择你的颜色</h1>
-                    <p class="text-purple-300">每个队伍中的颜色必须唯一</p>
+                    <h1 class="text-3xl font-bold mb-2">选择你的元素</h1>
+                    <p class="text-purple-300">每个队伍中的元素必须唯一</p>
                 </div>
 
                 <!-- Team Info Box -->
@@ -1158,14 +1158,14 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Color Options Grid -->
-                <div class="grid grid-cols-3 gap-4 mb-8">
+                <div class="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
                     <div role="button" tabindex="0" class="color-option"
                          :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }"
                          @click="selectColor('red')" @keydown.enter="selectColor('red')" @keydown.space="selectColor('red')">
-                        <div class="color-red-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
+                        <div class="color-red-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
-                             <img :src="getIconPath('color', 'red')" class="w-12 h-12 text-white" :alt="getColorText('red') + '图标'">
+                             <img :src="getIconPath('color', 'red')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getColorText('red') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('red') }}</p>
@@ -1173,10 +1173,10 @@ onUnmounted(() => {
                      <div role="button" tabindex="0" class="color-option"
                          :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }"
                          @click="selectColor('green')" @keydown.enter="selectColor('green')" @keydown.space="selectColor('green')">
-                        <div class="color-green-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
+                        <div class="color-green-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
-                             <img :src="getIconPath('color', 'green')" class="w-12 h-12 text-white" :alt="getColorText('green') + '图标'">
+                             <img :src="getIconPath('color', 'green')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getColorText('green') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('green') }}</p>
@@ -1184,10 +1184,10 @@ onUnmounted(() => {
                      <div role="button" tabindex="0" class="color-option"
                          :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }"
                          @click="selectColor('blue')" @keydown.enter="selectColor('blue')" @keydown.space="selectColor('blue')">
-                        <div class="color-blue-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
+                        <div class="color-blue-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
-                             <img :src="getIconPath('color', 'blue')" class="w-12 h-12 text-white" :alt="getColorText('blue') + '图标'">
+                             <img :src="getIconPath('color', 'blue')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getColorText('blue') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('blue') }}</p>
@@ -1257,7 +1257,7 @@ onUnmounted(() => {
             </div>
 
             <!-- Step 3: Job Selection -->
-            <div id="step-job-selection" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 3">
+            <div id="step-job-selection" class="glass rounded-3xl p-4 sm:p-6 md:p-8 fade-in" v-if="state.currentStep === 3">
                  <!-- Header -->
                 <div class="text-center mb-8">
                     <h1 class="text-3xl font-bold mb-2">选择你的职业</h1>
@@ -1291,14 +1291,14 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Job Options Grid -->
-                 <div class="grid grid-cols-3 gap-4 mb-8">
+                 <div class="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
                     <div role="button" tabindex="0" class="job-option"
                          :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
                          @click="selectJob('job-attacker');" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
-                         <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
+                         <div class="job-attacker-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 职业图标 -->
-                             <img :src="getIconPath('job', 'attacker')" class="w-12 h-12 text-white" :alt="getJobText('attacker') + '图标'">
+                             <img :src="getIconPath('job', 'attacker')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('attacker') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('attacker') }}</p>
@@ -1306,10 +1306,10 @@ onUnmounted(() => {
                     <div role="button" tabindex="0" class="job-option"
                          :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
                          @click="selectJob('job-defender')" @keydown.enter="selectJob('job-defender')" @keydown.space="selectJob('job-defender')">
-                         <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
+                         <div class="job-defender-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 职业图标 -->
-                             <img :src="getIconPath('job', 'defender')" class="w-12 h-12 text-white" :alt="getJobText('defender') + '图标'">
+                             <img :src="getIconPath('job', 'defender')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('defender') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('defender') }}</p>
@@ -1317,10 +1317,10 @@ onUnmounted(() => {
                     <div role="button" tabindex="0" class="job-option"
                          :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
                          @click="selectJob('job-supporter')" @keydown.enter="selectJob('job-supporter')" @keydown.space="selectJob('job-supporter')">
-                        <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
+                        <div class="job-supporter-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                             <!-- ***************************************************** -->
                             <!-- 替换这里的 Lucide 职业图标 -->
-                            <img :src="getIconPath('job', 'supporter')" class="w-12 h-12 text-white" :alt="getJobText('supporter') + '图标'">
+                            <img :src="getIconPath('job', 'supporter')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('supporter') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('supporter') }}</p>
