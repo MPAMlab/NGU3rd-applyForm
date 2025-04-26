@@ -246,7 +246,7 @@ function selectColor(color) {
 
 // 获取颜色显示文本
 function getColorText(colorId) {
-     const map = { red: '红色', green: '绿色', blue: '蓝色' };
+     const map = { red: '火', green: '木', blue: '水' };
      return map[colorId] || '';
 }
 
@@ -281,7 +281,7 @@ function selectJob(jobId) {
 
 // 获取职业显示文本
 function getJobText(jobType) {
-    const map = { attacker: '攻击手', defender: '防御手', supporter: '辅助手' };
+    const map = { attacker: '绝剑士', defender: '矩盾手', supporter: '炼星师' };
     return map[jobType] || '';
 }
 
