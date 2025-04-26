@@ -52,7 +52,12 @@
 		"database_id": "7b956247-6532-467e-9e63-48e5bb16f360"
 		}
 	], // <-- Add a comma here if 'routes' is not the last property
-
+	"r2_buckets": [
+		{
+		"binding": "AVATAR_BUCKET",
+		"bucket_name": "ngusignup",
+		}
+	],
 	/**
 	 * Routes
 	 * Define patterns to trigger this Worker.
