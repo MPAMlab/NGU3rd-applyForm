@@ -31,16 +31,16 @@ const state = reactive({
     avatarPreviewUrl: null, // 头像预览 URL (for joining)
 
     // User Info for Editing/Deleting (Modal)
-    showEditModal: false, // 新增：控制修改/删除模态框显示
-    editAuthMaimaiId: null, // 新增：用于模态框验证的 Maimai ID 输入
-    editAuthQqNumber: null, // 新增：用于模态框验证的 QQ 号输入
-    editNewNickname: null, // 新增：模态框中的新昵称输入
-    editNewQqNumber: null, // 新增：模态框中的新 QQ 号输入
-    editNewColor: null, // 新增：模态框中的新颜色选择
-    editNewJob: null, // 新增：模态框中的新职业选择
-    editNewAvatarFile: null, // 新增：模态框中的新头像文件对象
-    editNewAvatarPreviewUrl: null, // 新增：模态框中的新头像预览 URL
-    editClearAvatarFlag: false, // 新增：模态框中的清空头像标记
+    showEditModal: false, // 控制修改/删除模态框显示
+    editAuthMaimaiId: null, // 用于模态框验证的 Maimai ID 输入
+    editAuthQqNumber: null, // 用于模态框验证的 QQ 号输入
+    editNewNickname: null, // 模态框中的新昵称输入
+    editNewQqNumber: null, // 模态框中的新 QQ 号输入
+    editNewColor: null, // 模态框中的新颜色选择
+    editNewJob: null, // 模态框中的新职业选择
+    editNewAvatarFile: null, // 模态框中的新头像文件对象
+    editNewAvatarPreviewUrl: null, // 模态框中的新头像预览 URL
+    editClearAvatarFlag: false, // 模态框中的清空头像标记
 
     // UI State
     showConfirmModal: false, // 确认加入模态框
@@ -49,8 +49,8 @@ const state = reactive({
     errorMessage: null, // To display API errors
 
     // Data fetched from API
-    currentTeamMembers: [], // Members of the team when checking/joining (may not have all fields)
-    completionAllMembers: [], // All members with full details after successful join (for Step 5)
+    currentTeamMembers: [], // Members of the team when checking/joining (may not have all fields) - From /teams/check
+    completionAllMembers: [], // All members with full details after successful join (for Step 5) - From /teams/join
 
     confettiInterval: null, // To store interval ID for cleanup
 });
@@ -63,23 +63,25 @@ const progressWidth = computed(() => {
 
 // 检查颜色是否已被队伍成员占用
 const isColorDisabled = computed(() => (color) => {
-    // 在编辑模式下，不禁用当前编辑的成员已选择的颜色/职业
+    // 在编辑模态框中，如果有填入 Maimai ID（用于预填充auth)，
+    // 且该 ID 对应的成员存在，则不禁用该成员当前已选择的颜色。
      if (state.showEditModal && state.editAuthMaimaiId) {
-        const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId) === state.editAuthMaimaiId);
+         const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId)?.toString() === state.editAuthMaimaiId?.toString());
          if (memberBeingEdited && memberBeingEdited.color === color) return false;
      }
-     // else, check against all members
+     // 否则，检查队伍现有成员中是否有人占用了这个颜色。
     return state.currentTeamMembers.some(member => member.color === color);
 });
 
 // 检查职业是否已被队伍成员占用
 const isJobDisabled = computed(() => (jobType) => {
-    // 在编辑模式下，不禁用当前编辑的成员已选择的颜色/职业
+    // 在编辑模态框中，如果有填入 Maimai ID（用于预填充auth)，
+    // 且该 ID 对应的成员存在，则不禁用该成员当前已选择的职业。
      if (state.showEditModal && state.editAuthMaimaiId) {
-         const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId) === state.editAuthMaimaiId);
+         const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId)?.toString() === state.editAuthMaimaiId?.toString());
          if (memberBeingEdited && memberBeingEdited.job === jobType) return false;
      }
-    // else, check against all members
+    // 否则，检查队伍现有成员中是否有人占用了这个职业。
     return state.currentTeamMembers.some(member => member.job === jobType);
 });
 
@@ -108,10 +110,16 @@ function showStep(stepNumber) {
 
     // 进入完成步骤时触发 confetti 动画
     if (stepNumber === 5) {
+         // Delay slightly to ensure DOM is ready
          setTimeout(() => {
+             // Clear any existing confetti first if for some reason interval wasn't cleared
+             const celebrationDiv = document.getElementById('celebration');
+             if(celebrationDiv) celebrationDiv.innerHTML = '';
+
              createConfetti();
-             state.confettiInterval = setInterval(createConfetti, 2000); // 每2秒创建一批新的
-         }, 100); // 稍作延迟，确保 DOM 渲染
+             // Set interval to create more confetti periodically
+             state.confettiInterval = setInterval(createConfetti, 2000); // Create a batch every 2 seconds
+         }, 100);
     }
 }
 
@@ -151,7 +159,8 @@ async function handleContinue() {
         if (data.exists) {
             // 队伍存在
             state.teamName = data.name;
-            state.currentTeamMembers = data.members || []; // currentTeamMembers 用于步骤2和3的成员列表显示
+            // currentTeamMembers 从 check 接口获取，包含 maimai_id, nickname, color, job, avatar_url
+            state.currentTeamMembers = data.members || [];
             state.isNewTeam = false;
             state.showConfirmModal = true; // 显示确认加入模态框
         } else {
@@ -165,17 +174,17 @@ async function handleContinue() {
     } catch (e) {
         console.error('Fetch error checking team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-        state.showLoadingOverlay = false; // 出错时也要关闭 loading
     } finally {
-        state.showLoadingOverlay = false;
-        console.log('Finally: showLoadingOverlay set to', state.showLoadingOverlay); // 添加日志确认
+       // 无论 try 成功还是 catch 处理了错误，API 调用都结束了，隐藏加载层
+       state.showLoadingOverlay = false;
+       console.log('handleContinue finally: showLoadingOverlay set to', state.showLoadingOverlay);
     }
 }
 
 // 确认加入现有队伍 (从模态框点击确认)
 function confirmJoinTeam() {
     state.showConfirmModal = false;
-    state.showLoadingOverlay = false; // 关闭确认模态框前的 loading
+    // state.showLoadingOverlay = false; // Loading should already be false from handleContinue finally
     showStep(2); // 跳转到颜色选择步骤
 }
 
@@ -186,7 +195,7 @@ async function createNewTeam() {
     state.errorMessage = null;
 
      // 基础输入验证
-    if (!name || name.length === 0 || name.length > 50) {
+    if (!name || name.trim().length === 0 || name.trim().length > 50) {
         state.errorMessage = '队伍名称不能为空，且不能超过50个字符。';
         return;
     }
@@ -202,7 +211,7 @@ async function createNewTeam() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             mode: 'cors',
-            body: JSON.stringify({ code, name }),
+            body: JSON.stringify({ code, name: name.trim() }), // Trim name
         });
 
         const data = await response.json();
@@ -322,11 +331,21 @@ async function handleSubmitPersonalInfo() {
          state.errorMessage = '内部错误：颜色或职业未选择。请返回上一步。';
          return;
      }
-    // QQ 号格式验证 (简单的数字验证)
+     // QQ 号格式验证 (简单的数字验证)
     if (!/^[1-9][0-9]{4,14}$/.test(state.qqNumber.trim())) {
         state.errorMessage = '请输入有效的QQ号码 (5-15位数字, 非0开头)。';
         return;
     }
+     // maimaiId length validation (optional but good practice)
+     if (state.maimaiId.trim().length === 0 || state.maimaiId.trim().length > 13) {
+         state.errorMessage = '舞萌ID长度不正确 (应 ≤ 13位)。';
+         return;
+     }
+     // nickname length validation
+      if (state.nickname.trim().length === 0 || state.nickname.trim().length > 50) {
+          state.errorMessage = '称呼长度需在1到50个字符之间。';
+          return;
+      }
 
     state.showLoadingOverlay = true;
 
@@ -336,6 +355,7 @@ async function handleSubmitPersonalInfo() {
         formData.append('teamCode', state.teamCode.trim());
         formData.append('color', state.selectedColor);
         formData.append('job', state.selectedJob);
+        // 使用 trim() 清除首尾空格，确保数据干净
         formData.append('maimaiId', state.maimaiId.trim());
         formData.append('nickname', state.nickname.trim());
         formData.append('qqNumber', state.qqNumber.trim());
@@ -374,6 +394,12 @@ async function handleSubmitPersonalInfo() {
     } catch (e) {
         console.error('Fetch error joining team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
+         // Specific error messages from backend
+         if (e.message.includes('Maimai ID already exists')) {
+             state.errorMessage = '该舞萌ID已在该队伍中注册，请勿重复加入或选择修改/删除。';
+         } else if (e.message.includes('team member limit')) {
+             state.errorMessage = '队伍成员已满，无法加入。';
+         }
     } finally {
         state.showLoadingOverlay = false;
     }
@@ -384,48 +410,63 @@ function copyShareLink() {
     const urlToCopy = shareLinkUrl.value; // 使用计算属性获取链接
     if (!urlToCopy) return;
 
-    navigator.clipboard.writeText(urlToCopy).then(() => {
-        const copyBtn = document.getElementById('copyBtn'); // 确保有这个 ID
-        if (copyBtn) {
-            const originalIconHTML = copyBtn.innerHTML;
-            // 切换到“已复制”图标
-            copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
-            copyBtn.disabled = true; // 暂时禁用按钮
-            setTimeout(() => {
-                copyBtn.innerHTML = originalIconHTML; // 恢复原始图标
-                copyBtn.disabled = false;
-            }, 2000); // 2秒后恢复
-        }
-    }).catch(err => {
-        console.error('无法使用 Clipboard API 复制: ', err);
-        // 备选方法 (可能在非 https 环境或旧浏览器中需要)
-        try {
-            const inputElement = document.createElement('textarea');
-            inputElement.value = urlToCopy;
-            inputElement.style.position = 'absolute';
-            inputElement.style.left = '-9999px'; // 移出视口
-            document.body.appendChild(inputElement);
-            inputElement.select(); // 选中内容
-            document.execCommand('copy'); // 执行复制命令
-            document.body.removeChild(inputElement);
+    // Use modern navigator.clipboard API first
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(urlToCopy).then(() => {
+            handleCopyFeedback();
+        }).catch(err => {
+            console.error('Failed to copy using Clipboard API:', err);
+            // Fallback if clipboard API fails (e.g., permission issues)
+            fallbackCopyTextToClipboard(urlToCopy);
+        });
+    } else {
+        // Fallback for older browsers or non-HTTPS environments
+        fallbackCopyTextToClipboard(urlToCopy);
+    }
+}
 
-            // 提供反馈 (同上)
-            const copyBtn = document.getElementById('copyBtn');
-             if (copyBtn) {
-                const originalIconHTML = copyBtn.innerHTML;
-                copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
-                 copyBtn.disabled = true;
-                setTimeout(() => {
-                    copyBtn.innerHTML = originalIconHTML;
-                    copyBtn.disabled = false;
-                }, 2000);
-             }
-        } catch (execErr) {
-            console.error('无法使用 execCommand 复制: ', execErr);
-            // 如果备选方法也失败，提示用户手动复制
-            alert(`复制失败，请手动复制链接：\n${urlToCopy}`);
+function handleCopyFeedback() {
+     const copyBtn = document.getElementById('copyBtn'); // Ensure this ID exists
+     if (copyBtn) {
+         const originalIconHTML = copyBtn.innerHTML;
+         copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
+         copyBtn.disabled = true; // Temporarily disable
+         setTimeout(() => {
+             copyBtn.innerHTML = originalIconHTML; // Restore innerHTML (icon)
+             copyBtn.disabled = false;
+         }, 2000); // Restore after 2 seconds
+     }
+}
+
+// Fallback copy method for browsers that don't support navigator.clipboard
+function fallbackCopyTextToClipboard(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    // Avoid scrolling to bottom
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0"; // Make it invisible
+
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            console.log('Fallback copying successful!');
+            handleCopyFeedback(); // Provide visual feedback
+        } else {
+            console.error('Fallback copying unsuccessful.');
+            alert(`复制失败，请手动复制链接：\n${text}`);
         }
-    });
+    } catch (err) {
+        console.error('Fallback: Oops, unable to copy', err);
+        alert(`复制失败，请手动复制链接：\n${text}`);
+    }
+
+    document.body.removeChild(textarea);
 }
 
 // 返回首页并重置所有相关状态
@@ -439,7 +480,7 @@ function goHome() {
          URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
      }
 
-    // 重置所有状态变量到初始值
+    // Reset all state variables to initial values
     Object.assign(state, {
         currentStep: 1,
         teamCode: null,
@@ -474,88 +515,104 @@ function goHome() {
         errorMessage: null,
 
         // Reset data state
-        currentTeamMembers: [],
+        currentTeamMembers: [], // Clear member lists
         completionAllMembers: [],
 
-        confettiInterval: null, // 确保 confetti 定时器也被清理
+        confettiInterval: null, // Ensure confetti interval is cleared
     });
 
-    // 清理 URL 参数
+    // Clear confetti DOM elements directly just in case
+    const celebrationDiv = document.getElementById('celebration');
+    if(celebrationDiv) celebrationDiv.innerHTML = '';
+
+    // Clear URL parameters
     history.replaceState(null, '', window.location.pathname);
 
     // 可选：在这里等待 DOM 重置后，主动触发 Step 1 的动画
      setTimeout(() => {
-         showStep(1);
-     }, 50); // 短暂延迟确保状态重置
-
+         // Although state.currentStep is already 1, re-calling showStep(1)
+         // ensures any step-specific logic (like setting initial step) is run.
+         // However, Object.assign already sets it to 1, so this is redundant.
+         // Let's remove the setTimeout unless specific animation re-triggers are needed
+         // showStep(1); // This is not needed due to Object.assign
+     }, 50);
 }
 
-// Confetti 动画 (保持不变，或根据需要调整数量/颜色/时间)
+// Confetti 动画
 function createConfetti() {
     const celebrationDiv = document.getElementById('celebration');
     if (!celebrationDiv) return;
-    const confettiCount = 20; // 每批生成的纸屑数量
-    const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d', '#ff9a9e', '#fad0c4', '#a1c4fd', '#c2e9fb', '#d4fc79']; // 更多颜色
-    const types = ['square', 'circle', 'triangle']; // 示例：不同形状 (需要对应 CSS)
+    const confettiCount = 20;
+    const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d', '#ff9a9e', '#fad0c4', '#a1c4fd', '#c2e9fb', '#d4fc79'];
+    const types = ['square', 'circle']; // Simple shapes
 
     for (let i = 0; i < confettiCount; i++) {
         const confetti = document.createElement('div');
-        // confetti.classList.add('confetti', types[Math.floor(Math.random() * types.length)]); // 如果有不同形状
-        confetti.classList.add('confetti'); // 沿用单一样式
+        confetti.classList.add('confetti');
+
+        // Add shape class if using different shapes
+        // confetti.classList.add('confetti', `confetti-${types[Math.floor(Math.random() * types.length)]}`);
+
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
         confetti.style.backgroundColor = randomColor;
 
-        // 随机起始水平位置 (稍微超出屏幕左/右)
-        const startX = Math.random() * 120 - 10; // -10% to 110% of viewport width
+        // More random positioning and animation values
+        const startX = Math.random() * 120 - 10; // -10vw to 110vw
         confetti.style.left = startX + 'vw';
-        // 随机起始垂直位置 (屏幕顶部附近)
-        confetti.style.top = -10 - (Math.random() * 20) + 'vh'; // -10vh to -30vh
+        const startY = -10 - (Math.random() * 20); // -10vh to -30vh
+        confetti.style.top = startY + 'vh';
 
         const size = Math.random() * 10 + 5; // 5px to 15px
         confetti.style.width = size + 'px';
         confetti.style.height = size + 'px';
 
-        const duration = Math.random() * 3 + 2; // 2s to 5s 动画时长
+        const duration = Math.random() * 4 + 2; // 2s to 6s
         confetti.style.animationDuration = duration + 's';
-        const delay = Math.random() * 3; // 0s to 3s 动画延迟
+        const delay = Math.random() * 3; // 0s to 3s
         confetti.style.animationDelay = delay + 's';
 
-        // 增加一些旋转让动画更生动
          const startRotate = Math.random() * 360;
-         const endRotate = startRotate + (Math.random() > 0.5 ? 360 : -360); // 随机顺/逆时针旋转一周
+         const endRotate = startRotate + (Math.random() > 0.5 ? 720 : -720); // Rotate 2 full turns
          confetti.style.setProperty('--start-rotate', `${startRotate}deg`);
          confetti.style.setProperty('--end-rotate', `${endRotate}deg`);
+         confetti.style.setProperty('--end-y', '105vh'); // Fall below viewport
 
         celebrationDiv.appendChild(confetti);
 
-        // 动画结束时移除 DOM 元素
+        // Clean up after animation ends
         confetti.addEventListener('animationend', () => { confetti.remove(); });
+        // Add a fallback removal in case animationend doesn't fire (rare)
+         setTimeout(() => confetti.remove(), duration * 1000 + delay * 1000 + 500);
     }
 }
 
 // --- Edit/Delete Modal Functions ---
 
 // 打开修改信息模态框
-// 可以在 Step 5 点击某个按钮时调用，可能需要传入当前成员的唯一标识（如 maimaiId）
-function openEditModal() {
-   // TODO: 如果希望在打开时加载当前用户信息，需要一个 API 来获取当前用户信息
-   // 或者让用户自己输入 maimaiId 和 QQ 来拉取信息（更复杂）
-   // 目前简化处理：用户直接输入 maimaiId 和 QQ 进行验证和修改
-   state.editAuthMaimaiId = null;
-   state.editAuthQqNumber = null;
+// Accepts an optional maimaiId to pre-fill the authentication field
+function openEditModal(maimaiIdToEdit = null) {
+   // Reset modal form fields
+   state.editAuthMaimaiId = maimaiIdToEdit !== null ? maimaiIdToEdit.toString() : null; // Pre-fill if provided
+   state.editAuthQqNumber = null; // Always require QQ for auth
    state.editNewNickname = null;
    state.editNewQqNumber = null;
    state.editNewColor = null;
    state.editNewJob = null;
    state.editNewAvatarFile = null;
+   // Revoke previous preview URL if any
+   if (state.editNewAvatarPreviewUrl) {
+       URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
+   }
    state.editNewAvatarPreviewUrl = null;
    state.editClearAvatarFlag = false;
    state.errorMessage = null; // Clear error messages when opening modal
    state.showEditModal = true;
+   console.log("Edit modal opened. Pre-filled Maimai ID:", maimaiIdToEdit);
 }
 
 // 关闭修改信息模态框
 function closeEditModal() {
+   console.log("Closing edit modal.");
    state.showEditModal = false;
    state.errorMessage = null; // Clear errors on close
    // Clean up avatar preview URL specific to the modal
@@ -563,8 +620,15 @@ function closeEditModal() {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
         state.editNewAvatarPreviewUrl = null;
     }
-    // Optionally reset form fields if you don't want them to persist on next open
-    // openEditModal(); // This would reset fields but doesn't change modal visibility
+    // Reset form fields after close for next open
+    state.editAuthMaimaiId = null;
+    state.editAuthQqNumber = null;
+    state.editNewNickname = null;
+    state.editNewQqNumber = null;
+    state.editNewColor = null;
+    state.editNewJob = null;
+    state.editNewAvatarFile = null;
+    state.editClearAvatarFlag = false;
 }
 
 // 处理模态框中的新头像文件选择和预览
@@ -578,6 +642,10 @@ function handleEditAvatarChange(event) {
             URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
         }
         state.editNewAvatarPreviewUrl = null;
+        state.editClearAvatarFlag = false; // Clear clear flag if file input is emptied
+        // Reset the file input element visually if needed (might require a ref or key)
+         const editAvatarInput = document.getElementById('edit-avatar-upload');
+         if(editAvatarInput) editAvatarInput.value = null; // Clear the file input value
         return;
     }
 
@@ -599,37 +667,37 @@ function handleEditAvatarChange(event) {
 
     state.editNewAvatarFile = file;
 
-    // 生成预览 URL
+    // Generate preview URL
      if (state.editNewAvatarPreviewUrl) {
          URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
      }
      state.editNewAvatarPreviewUrl = URL.createObjectURL(file);
      console.log("Edit modal: Avatar file selected:", file.name, "Preview URL:", state.editNewAvatarPreviewUrl);
 
-     // 如果选择了新文件，取消“清空头像”标记
+     // If a new file is selected, cancel the "clear avatar" flag
      state.editClearAvatarFlag = false;
 }
 
-// 移除模态框中选中的新头像文件
+// Remove the selected new avatar file in the modal
 function removeEditAvatar() {
     state.editNewAvatarFile = null;
     if (state.editNewAvatarPreviewUrl) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
         state.editNewAvatarPreviewUrl = null;
     }
-    // Reset the file input element visually if needed (might require a ref or key)
+    // Reset the file input element visually
      const editAvatarInput = document.getElementById('edit-avatar-upload');
-     if(editAvatarInput) editAvatarInput.value = null; // Clear the file input value
+     if(editAvatarInput) editAvatarInput.value = null;
 
-     console.log("Edit modal: New avatar file removed.");
+     console.log("Edit modal: Selected new avatar file removed.");
 }
 
-// 提交修改信息 (API: PATCH /api/members/:maimaiId)
+// Submit structural changes to data using PATCH (API: PATCH /api/members/:maimaiId)
 async function saveChanges() {
     state.errorMessage = null;
      // Check required auth fields
     if (!state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()) {
-         state.errorMessage = '请输入舞萌ID和当前QQ号进行验证。';
+         state.errorMessage = '请输入舞萌ID和当前QQ号进行验证才能保存。';
          return;
     }
      // Validate auth QQ format
@@ -637,14 +705,20 @@ async function saveChanges() {
          state.errorMessage = '验证QQ号码格式不正确。';
          return;
     }
+    // Validate auth maimaiId format (simple check for digits/length if needed)
+    if (state.editAuthMaimaiId.trim().length === 0 || state.editAuthMaimaiId.trim().length > 13) {
+        state.errorMessage = '验证舞萌ID长度不正确 (应 ≤ 13位)。';
+        return;
+    }
+
      // Validate new QQ format if provided
-     if (state.editNewQqNumber?.trim() && !/^[1-9][0-9]{4,14}$/.test(state.editNewQqNumber.trim())) {
+     if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '' && !/^[1-9][0-9]{4,14}$/.test(state.editNewQqNumber.trim())) {
          state.errorMessage = '请输入有效的QQ号码（修改）。';
          return;
      }
      // Validate new nickname length if provided
-     if (state.editNewNickname?.trim() && (state.editNewNickname.trim().length === 0 || state.editNewNickname.trim().length > 50)) {
-          state.errorMessage = '新昵称长度需在1到50个字符之间。';
+     if (state.editNewNickname !== null && state.editNewNickname.trim() !== '' && (state.editNewNickname.trim().length === 0 || state.editNewNickname.trim().length > 50)) {
+          state.errorMessage = '新称呼长度需在1到50个字符之间。';
           return;
      }
 
@@ -656,11 +730,13 @@ async function saveChanges() {
         formData.append('qqNumberAuth', state.editAuthQqNumber.trim());
 
         // Append only the fields that the user has potentially changed or filled
-        // Trim values to avoid sending whitespace-only updates
-        if (state.editNewNickname !== null && state.editNewNickname.trim() !== '') formData.append('nickname', state.editNewNickname.trim());
-        if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '') formData.append('qqNumber', state.editNewQqNumber.trim());
-        if (state.editNewColor !== null && state.editNewColor !== '') formData.append('color', state.editNewColor);
-        if (state.editNewJob !== null && state.editNewJob !== '') formData.append('job', state.editNewJob);
+        // Only append if the value is NOT null or an empty string after trim() - except for color/job where empty string signifies no change.
+        // For color/job, only append if a specific value OTHER THAN '' is selected.
+        if (state.editNewNickname !== null) formData.append('nickname', state.editNewNickname.trim()); // Allow empty string to clear nickname if backend supports? No, backend requires it. Trim and check against original if available. Let's revert to only appending if not null/empty.
+         if (state.editNewNickname !== null && state.editNewNickname.trim() !== '') formData.append('nickname', state.editNewNickname.trim()); // Only append if user provided a non-empty new nickname
+         if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '') formData.append('qqNumber', state.editNewQqNumber.trim()); // Only append if user provided a non-empty new qq number
+         if (state.editNewColor !== null && state.editNewColor !== '') formData.append('color', state.editNewColor); // Append if a specific color is selected
+         if (state.editNewJob !== null && state.editNewJob !== '') formData.append('job', state.editNewJob); // Append if a specific job is selected
 
         // Handle avatar changes
         if (state.editNewAvatarFile) {
@@ -668,12 +744,12 @@ async function saveChanges() {
             formData.append('avatarFile', state.editNewAvatarFile);
             formData.append('clearAvatar', 'false'); // New file overrides clear
              console.log("Appending new avatar file for update.");
-        } else if (state.editClearAvatarFlag) {
+         } else if (state.editClearAvatarFlag) {
             // If no new file, but clear flag is true, append clearAvatar=true
             formData.append('clearAvatar', 'true');
              console.log("Appending clearAvatar=true for update.");
-        }
-        // If neither a new file is selected nor clearAvatar is checked, do nothing about avatar.
+         }
+         // If neither a new file is selected nor clearAvatar is checked, do nothing about avatar on the backend.
 
         console.log("Sending PATCH request to:", `${API_BASE_URL}/members/${state.editAuthMaimaiId.trim()}`);
         // Log formData contents (for debugging)
@@ -690,42 +766,61 @@ async function saveChanges() {
 
         if (!response.ok) {
              console.error('API error saving changes:', response.status, data);
-             throw new Error(data.error || `保存修改失败 (${response.status})`);
+             let errorMsg = data.error || `保存修改失败 (${response.status})`;
+             if (data.error?.includes('Authorization failed')) {
+                 errorMsg = '舞萌ID 或 QQ 号不匹配，无法验证身份。';
+             } else if (data.error?.includes('already taken')) {
+                 errorMsg = '选择的颜色/职业已被队伍其他成员占用。';
+             }
+             throw new Error(errorMsg);
         }
 
         console.log('Changes saved successfully:', data);
-        state.errorMessage = '信息更新成功！'; // Success message
+        state.errorMessage = '信息更新成功！'; // Success message within the modal
 
         // Update the member list in state if the response includes the updated member
         // Assumes the backend returns the updated member object under `data.member`
          if (data.member) {
-             // Find the index of the member in the completionAllMembers array
-             const index = state.completionAllMembers.findIndex(m => (m.maimai_id || m.maimaiId) === (data.member.maimai_id || data.member.maimaiId));
-             if (index !== -1) {
-                 // Update the member object in the array using reactive Vue method
-                 state.completionAllMembers[index] = { ...state.completionAllMembers[index], ...data.member };
-                 console.log("Updated member in completionAllMembers array.");
+             const updatedMaimaiId = data.member.maimai_id?.toString() || data.member.maimaiId?.toString();
+             if (updatedMaimaiId) {
+                 // Find the index in the Step 5 members list (`completionAllMembers`)
+                 const indexCompletion = state.completionAllMembers.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
+                 if (indexCompletion !== -1) {
+                     // Use Vue.set or array spread to ensure reactivity
+                      state.completionAllMembers[indexCompletion] = { ...state.completionAllMembers[indexCompletion], ...data.member };
+                     console.log("Updated member in completionAllMembers array.");
+                 } else {
+                    console.warn("Updated member not found in completionAllMembers array after PATCH.");
+                    // Fallback: If Step 5 list can't be updated directly, maybe re-fetch team data?
+                    // await fetchTeamData(state.teamCode); // Need a separate function for this
+                 }
+
+                 // Also update the members list in the confirmation modal state (`currentTeamMembers`)
+                 const indexCurrent = state.currentTeamMembers.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
+                  if (indexCurrent !== -1) {
+                       // Note: currentTeamMembers might have fewer fields than completionAllMembers
+                       // Only update fields that are present in currentTeamMembers
+                      state.currentTeamMembers[indexCurrent] = {
+                           ...state.currentTeamMembers[indexCurrent],
+                           maimai_id: data.member.maimai_id, // Ensure maimai_id is carried over
+                           nickname: data.member.nickname,
+                           color: data.member.color,
+                           job: data.member.job,
+                           avatar_url: data.member.avatar_url, // Update avatar URL here too
+                       };
+                       console.log("Updated member in currentTeamMembers array.");
+                  }
              } else {
-                console.warn("Updated member not found in completionAllMembers array after PATCH.");
-                // Fallback: Re-fetch the whole team data if needed (more complex)
-                // await fetchTeamData(state.teamCode); // Need a separate function for this
+                  console.warn("PATCH success response did not include a member object with maimai_id.");
              }
-             // Also update currentTeamMembers if they are currently displayed (e.g., if user goes back)
-             const indexCurrent = state.currentTeamMembers.findIndex(m => (m.maimai_id || m.maimaiId) === (data.member.maimai_id || data.member.maimaiId));
-              if (indexCurrent !== -1) {
-                   // Note: currentTeamMembers in step 2/3 only have color, job, nickname, avatar_url
-                  state.currentTeamMembers[indexCurrent] = {
-                       ...state.currentTeamMembers[indexCurrent],
-                       color: data.member.color,
-                       job: data.member.job,
-                       nickname: data.member.nickname,
-                       avatar_url: data.member.avatar_url, // Update avatar URL here too
-                   };
-              }
          }
 
         // Close the modal after successful save
-        closeEditModal(); // Will also clean up modal avatar preview
+        // Use a slight delay so the "信息更新成功" message is visible briefly
+         setTimeout(() => {
+             closeEditModal();
+             state.errorMessage = null; // Clear the success message after modal is closed
+         }, 1500);
 
     } catch (e) {
         console.error('Fetch error saving changes:', e);
@@ -735,7 +830,7 @@ async function saveChanges() {
     }
 }
 
-// 删除报名信息 (API: DELETE /api/members/:maimaiId)
+// Delete member entry (API: DELETE /api/members/:maimaiId)
 async function deleteEntry() {
      state.errorMessage = null;
      // Check required auth fields
@@ -748,10 +843,15 @@ async function deleteEntry() {
          state.errorMessage = '验证QQ号码格式不正确。';
          return;
     }
+     // Validate auth maimaiId format
+     if (state.editAuthMaimaiId.trim().length === 0 || state.editAuthMaimaiId.trim().length > 13) {
+         state.errorMessage = '验证舞萌ID长度不正确。';
+         return;
+     }
 
     // Show a confirmation dialog before proceeding
     if (!window.confirm(`确定要删除 Maimai ID 为 "${state.editAuthMaimaiId.trim()}" 的报名信息吗？此操作无法撤销！`)) {
-        console.log("Delete cancelled by user.");
+        console.log("Delete cancelled by user via confirm dialog.");
         return; // User cancelled
     }
 
@@ -772,61 +872,89 @@ async function deleteEntry() {
          // DELETE might return 204 No Content on success, or JSON on error
          if (response.status === 204) {
              console.log('Deletion successful (received 204 No Content).');
-             state.errorMessage = '报名信息已成功删除。'; // Success message
+             // state.errorMessage = '报名信息已成功删除。'; // Success message inside modal is fine
 
-              // Remove the deleted member from the completionAllMembers array
+              // Remove the deleted member from the completionAllMembers array (Step 5)
              state.completionAllMembers = state.completionAllMembers.filter(
-                  member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
+                  member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
              );
-              // Also remove from currentTeamMembers if applicable
+              // Also remove from currentTeamMembers array (Confirm modal / Step 2/3)
              state.currentTeamMembers = state.currentTeamMembers.filter(
-                 member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
+                 member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
              );
 
-             // If the deleted member was the last one, maybe redirect or show different message?
-             if (state.completionAllMembers.length === 0) {
-                  console.log("Team is now empty after deletion.");
-                  // Optional: Go back to step 1 or home page if the team is now empty
-                  setTimeout(goHome, 2000); // Go home after a short delay
-             }
+             console.log(`Removed member ${state.editAuthMaimaiId.trim()} from local state.`);
 
              // Close the modal and potentially go back to a relevant step or homepage
-             closeEditModal();
-             // If user deleted their own entry and team is empty, maybe go home...
-             // If they deleted someone else's or team isn't empty, stay on step 5
-             // For simplicity, let's just close the modal and update the list.
-             // If the team is empty, goHome is called via the check above.
+              closeEditModal();
+             state.errorMessage = '报名信息已成功删除！'; // Set success message after close
+
+             // If confirming modal is open, close it too after deletion, as the member list has changed significantly
+             if (state.showConfirmModal) {
+                 state.showConfirmModal = false;
+                  // Optional: If the deleted member was the one they were about to join as,
+                  // maybe force returning to step 1? Or just let them continue the join flow if they intended to join as *a new* member.
+                  // For now, just close Confirm Modal.
+             }
+
+             // Optional: If the team is now empty after deletion, maybe force goHome
+             if (state.completionAllMembers.length === 0 && state.currentStep === 5) {
+                  console.log("Team is now empty after deletion from Step 5. Navigating home.");
+                  // Go home after a slight delay so the success message is seen
+                  setTimeout(() => {
+                       goHome();
+                        state.errorMessage = null; // Clear success message after going home
+                  }, 2000);
+             } else if (state.completionAllMembers.length > 0 && state.currentStep === 5) {
+                  // If remaining members and still on step 5, just update the list visually
+                   state.errorMessage = '报名信息已成功删除！队伍列表已更新。'; // Keep success message visible on Step 5
+             } else {
+                 // If user deleted from Confirm modal (Step 1), it's less clear what to do.
+                 // They checked the code, saw their entry, deleted it.
+                 // Let's just close the modals and clear state, keeping them potentially on step 1
+                 // where they can check the code again (and see their entry is gone) or enter a different code.
+                  console.log("Deletion happened from modal on a step other than 5.");
+                  // Just close modals, stay on current step (likely 1)
+
+                   // Set success message briefly if not going home immediately
+                   if (!state.showConfirmModal && !state.showCreateModal && state.currentStep === 1) {
+                         state.errorMessage = '报名信息已成功删除！';
+                         setTimeout(() => { state.errorMessage = null; }, 3000);
+                   }
+             }
 
          } else if (response.ok) {
              // Should ideally be 204, but handle other 2xx if backend changes
              const data = await response.json();
               console.log('Deletion successful (unexpected 2xx):', data);
-              state.errorMessage = '报名信息已成功删除。'; // Success message - adjust if needed
-              // Update lists similar to the 204 case
-              state.completionAllMembers = state.completionAllMembers.filter(
-                   member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
-              );
+              // Treat as success, update lists and close modal
+               state.completionAllMembers = state.completionAllMembers.filter(
+                   member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
+               );
                state.currentTeamMembers = state.currentTeamMembers.filter(
-                  member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
+                  member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
                );
               closeEditModal();
-              if (state.completionAllMembers.length === 0) { setTimeout(goHome, 2000); }
+                state.errorMessage = '报名信息已成功删除！';
+                if (state.showConfirmModal) state.showConfirmModal = false;
+              if (state.completionAllMembers.length === 0 && state.currentStep === 5) { setTimeout(() => { goHome(); state.errorMessage = null; }, 2000); }
 
          } else {
              // Handle error response (non-2xx/non-204)
              const data = await response.json(); // Expect error details in JSON
              console.error('API error deleting entry:', response.status, data);
-             throw new Error(data.error || `删除信息失败 (${response.status})`);
+             let errorMsg = data.error || `删除信息失败 (${response.status})`;
+             if (data.error?.includes('Authorization failed')) {
+                 errorMsg = '舞萌ID 或 QQ 号不匹配，无法验证身份。';
+             } else if (data.error?.includes('not found')) {
+                  errorMsg = '未找到匹配的报名信息。';
+             }
+            throw new Error(errorMsg);
          }
 
     } catch (e) {
         console.error('Fetch error deleting entry:', e);
-         let errorMsg = e.message || '删除失败，请稍后再试。';
-         // Specific error message for auth failure in delete
-         if (e.message.includes('Authorization failed')) {
-             errorMsg = 'Maimai ID 或 QQ 号不匹配，无法验证身份。';
-         }
-        state.errorMessage = errorMsg;
+         state.errorMessage = e.message || '删除失败，请稍后再试。';
     } finally {
         state.showLoadingOverlay = false;
     }
@@ -841,57 +969,50 @@ onMounted(() => {
 
     if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
         state.teamCode = codeParam;
-        handleContinue(); // 自动触发检查
+        // Add a minimal delay to allow CSS transitions/animations on initial load
+         setTimeout(() => {
+             handleContinue(); // Auto-trigger check
+         }, 100);
     } else {
-       showStep(state.currentStep); // 确保显示初始步骤
+       showStep(state.currentStep); // Ensure initial step is shown
     }
 
-    // PC 居中问题：Flexbox 布局已经在 root div 和 .container 上应用，
-    // 如果依然不居中，可能是父级元素或全局 CSS 影响了 flex 布局或宽度。
-    // 检查 body, html 的 height/min-height 属性是否允许 flex 容器撑满屏幕。
-    // 确保没有其他 CSS 规则覆盖了 flexbox 属性或 container 的 margin/max-width。
+    // PC Centering Debug: The flex and mx-auto should center on most setups
+    // If not centered, check global CSS for html, body, #app
+    // especially 'height', 'min-height', 'display', 'justify-content', 'align-items'
 });
 
 onUnmounted(() => {
-    // 清理 confetti 定时器
+    // Clean up confetti interval
     if (state.confettiInterval) {
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
+        // Clean up confetti DOM elements
          const celebrationDiv = document.getElementById('celebration');
          if(celebrationDiv) celebrationDiv.innerHTML = '';
     }
-    // 清理 Step 4 头像预览 Object URL
+    // Clean up Step 4 avatar preview Object URL
     if (state.avatarPreviewUrl) {
         URL.revokeObjectURL(state.avatarPreviewUrl);
     }
-    // 清理编辑模态框头像预览 Object URL
+    // Clean up edit modal avatar preview Object URL
      if (state.editNewAvatarPreviewUrl) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
     }
 });
 
-/*
-// Optional: Watch for changes in currentTeamMembers to update disabled status dynamically
-watch(() => state.currentTeamMembers, (newMembers) => {
-    console.log("currentTeamMembers updated:", newMembers);
-    // Recalculate disabled states if needed, should already be reactive via computed properties
-}, { deep: true });
-*/
-
 </script>
 
 <template>
-    <!-- 根容器，使用 flex 居中内容 -->
+    <!-- Root container using flexbox for centering -->
     <!-- Added more responsive padding and ensured full height -->
-    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 overflow-hidden relative"> <!-- overflow hidden to prevent layout shift from confetti -->
+    <!-- Removed overflow-hidden from root to allow modal scroll if needed, added to confetti container -->
+    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
 
-        <!-- Main Content Container -->
-        <!-- Use max-w-md for larger breakpoint, always mx-auto for centering -->
-        <div class="w-full max-w-md mx-auto">
-             <!-- Adjust z-index to control stacking order -->
-            <div class="relative z-10"> <!-- Content should be above confetti -->
+        <!-- Main Content Container, centered with max-width -->
+        <div class="w-full max-w-md mx-auto relative z-10"> <!-- Content should be above confetti -->
 
-            <!-- 进度条 (步骤 2-4 可见) -->
+            <!-- Progress Bar (Visible in steps 2-4) -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
                     <span>组队码</span>
@@ -904,17 +1025,20 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 </div>
             </div>
 
-             <!-- 错误消息显示区域 -->
+             <!-- Error message display area -->
              <!-- Use fade-in-up for transition -->
              <transition name="fade-in-up">
-                 <div v-if="state.errorMessage" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-center" role="alert">
-                     <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0" alt="Error">
-                     <span class="break-words">{{ state.errorMessage }}</span> <!-- Allow text to wrap -->
+                 <div v-if="state.errorMessage && (!state.showConfirmModal && !state.showCreateModal && !state.showEditModal  && !state.showLoadingOverlay)" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                     <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
+                     <span class="break-words flex-grow">{{ state.errorMessage }}</span> <!-- Allow text to wrap -->
+                    <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.errorMessage = null" aria-label="关闭错误消息">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
                 </div>
              </transition>
 
-            <!-- Step 1: 组队码输入 -->
-            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1"> <!-- Use v-if for cleaner DOM -->
+            <!-- Step 1: Team Code Input -->
+            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1">
                 <!-- Header -->
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
@@ -948,7 +1072,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 </button>
             </div>
 
-            <!-- Step 2: 颜色选择 -->
+            <!-- Step 2: Color Selection -->
             <div id="step-color-selection" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 2">
                 <!-- Header -->
                 <div class="text-center mb-8">
@@ -959,7 +1083,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 <!-- Team Info Box -->
                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
                      <div class="flex items-center">
-                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md">
+                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
                              <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
@@ -1002,7 +1126,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                     <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
                     <div class="space-y-3 max-h-32 overflow-y-auto"> <!-- Added max height and overflow -->
                          <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
-                        <div v-else v-for="member in state.currentTeamMembers" :key="member.nickname + member.color + member.job /* Better key */" class="flex items-center">
+                        <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname /* Better key */" class="flex items-center">
                              <!-- Avatar or Icon -->
                              <img
                                  v-if="member.avatar_url"
@@ -1038,12 +1162,12 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                  <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
                 </button>
-                <button @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                <button type="button" @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回首页
                 </button>
             </div>
 
-            <!-- Step 3: 职业选择 -->
+            <!-- Step 3: Job Selection -->
             <div id="step-job-selection" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 3">
                  <!-- Header -->
                 <div class="text-center mb-8">
@@ -1106,7 +1230,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                      <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
                     <div class="space-y-3 max-h-32 overflow-y-auto"> <!-- Added max height and overflow -->
                          <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
-                        <div v-else v-for="member in state.currentTeamMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
+                        <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center">
                               <!-- Avatar or Icon -->
                               <img
                                  v-if="member.avatar_url"
@@ -1147,7 +1271,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 </button>
             </div>
 
-            <!-- Step 4: 个人信息 (Updated with Avatar Upload) -->
+            <!-- Step 4: Personal Info (Updated with Avatar Upload) -->
             <div id="step-personal-info" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 4">
                  <!-- Header -->
                  <div class="text-center mb-8">
@@ -1247,7 +1371,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 </form>
             </div>
 
-            <!-- Step 5: 完成页面 (Updated with Avatar Display and Edit Button) -->
+            <!-- Step 5: Completion Page (Updated with Avatar Display and Edit Button) -->
             <div id="step-completion" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 5">
                  <!-- Progress Bar (Completed) -->
                 <div class="mb-8">
@@ -1288,6 +1412,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 <!-- Final Member List (Updated with Avatar, Maimai ID needed for "You" tag) -->
                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
                     <h3 class="text-sm font-medium mb-3 text-purple-300">队伍成员</h3>
+                     <!-- Use flex-col for list container to stack items -->
                     <div class="space-y-3 max-h-48 overflow-y-auto"> <!-- Added max height and overflow -->
                          <div v-if="state.completionAllMembers.length === 0" class="text-center text-gray-500 text-sm py-2">队伍信息加载中...</div>
                          <div v-else v-for="member in state.completionAllMembers" :key="member.maimai_id || member.maimaiId || member.nickname /* Use maimaiId or combined as key */" class="flex items-center relative">
@@ -1309,6 +1434,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                               </div>
 
                              <!-- Member Details -->
+                             <!-- Use flex-grow to take remaining space -->
                             <div class="flex-grow">
                                  <!-- Check against both maimai_id (from DB) and maimaiId (from user input state) -->
                                 <p class="font-medium text-sm flex items-center">
@@ -1326,13 +1452,15 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                                     </span>
                                 </p>
                                  <!-- Maybe display Maimai ID here? -->
-                                 <!-- <p class="text-xs text-gray-500">{{ member.maimai_id || member.maimaiId }}</p> -->
+                                 <!-- Uncomment below if you want to show Maimai ID in the list -->
+                                 <!-- <p class="text-xs text-gray-500 mt-0.5">ID: {{ member.maimai_id || member.maimaiId || 'N/A' }}</p> -->
                             </div>
                         </div>
                     </div>
                      <!-- Button to trigger Edit Modal -->
                      <div class="mt-6 text-center">
-                         <button @click="openEditModal" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center mx-auto">
+                         <!-- This button triggers the modal for the CURRENT user -->
+                         <button @click="openEditModal(state.maimaiId)" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center mx-auto">
                              <img src="https://unpkg.com/lucide-static@latest/icons/edit.svg" class="w-4 h-4 mr-2" alt="Edit">
                              修改我的报名信息
                          </button>
@@ -1383,18 +1511,6 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                              <img src="https://unpkg.com/lucide-static@latest/icons/copy.svg" class="w-5 h-5 text-white" alt="Copy">
                         </button>
                     </div>
-
-                    <!-- Optional: Placeholder Share Buttons -->
-                    <!-- <div class="flex space-x-2">
-                        <button class="flex-1 flex items-center justify-center bg-blue-500 hover:bg-blue-600 rounded-lg py-2 transition text-white font-medium text-sm">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/message-circle.svg" class="w-4 h-4 mr-1.5" alt="QQ">
-                            <span>分享到QQ</span>
-                        </button>
-                        <button class="flex-1 flex items-center justify-center bg-green-500 hover:bg-green-600 rounded-lg py-2 transition text-white font-medium text-sm">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/message-square.svg" class="w-4 h-4 mr-1.5" alt="WeChat">
-                            <span>分享到微信</span>
-                        </button>
-                    </div> -->
                 </div>
 
                 <!-- Back to Home Button -->
@@ -1407,23 +1523,27 @@ watch(() => state.currentTeamMembers, (newMembers) => {
 
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10"> <!-- Ensure footer is above confetti -->
-                <!-- 使用环境变量中的域名 -->
+                <!-- Use environment variable domain -->
                  <p>© {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
             </div>
 
         </div> <!-- End of Container -->
 
         <!-- Modals -->
-        <!-- Confirm Join Modal -->
-        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-show="state.showConfirmModal">
-            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700">
+        <!-- Confirm Join Modal (Updated with Edit Button in Member List) -->
+        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showConfirmModal">
+            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8"> <!-- Added margin for scroll -->
                 <h3 class="text-xl font-bold mb-4">确认加入队伍</h3>
                 <p class="mb-6 text-sm text-gray-200">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍。当前成员 <span class="font-bold">{{ state.currentTeamMembers.length }}</span>/3。</p>
-                 <!-- Display members in confirm modal (compact) -->
-                 <div v-if="state.currentTeamMembers.length > 0" class="mb-4 space-y-2 max-h-24 overflow-y-auto text-xs border-t border-b border-gray-700 py-2 px-1">
+                 <!-- Display members in confirm modal (compact + Edit Button) -->
+                 <div v-if="state.currentTeamMembers.length > 0" class="mb-4 space-y-2 max-h-32 overflow-y-auto text-sm border-t border-b border-gray-700 py-2 px-1">
                      <span class="font-semibold text-purple-300 block mb-1">现有成员:</span>
-                     <div v-for="member in state.currentTeamMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
-                         <!-- Avatar or Icon -->
+                     <!-- Use flex layout for each member item to place button on the right -->
+                     <!-- Using member.maimai_id as primary key for the list -->
+                      <div v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center justify-between">
+                         <!-- Left side: Avatar/Icon and Details -->
+                         <div class="flex items-center flex-grow mr-2">
+                             <!-- Avatar or Icon -->
                              <img
                                  v-if="member.avatar_url"
                                  :src="member.avatar_url"
@@ -1438,14 +1558,26 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                               >
                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-3 h-3 text-white" :alt="getColorText(member.color)">
                               </div>
-                         <!-- Name and Details -->
-                         <span class="text-gray-300">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
+                             <!-- Name and Details -->
+                             <span class="text-gray-300 flex-grow">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
+                         </div>
+
+                         <!-- Right side: Edit Button (only if maimai_id exists) -->
+                         <button
+                            v-if="member.maimai_id"
+                             type="button"
+                             @click="openEditModal(member.maimai_id)"
+                             class="flex-shrink-0 ml-auto px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded-md text-xs font-medium text-white transition-colors"
+                             aria-label="修改此报名信息"
+                         >
+                            修改
+                         </button>
                      </div>
                  </div>
                  <p v-else class="mb-4 text-sm text-gray-400 italic">队伍目前还没有成员。</p>
 
                 <div class="flex space-x-4">
-                    <button type="button" @click="state.showConfirmModal = false; state.showLoadingOverlay = false;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
+                    <button type="button" @click="state.showConfirmModal = false; /* Keep loading state managed by handleContinue finally */" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
                         取消
                     </button>
                     <button type="button" @click="confirmJoinTeam" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium">
@@ -1455,9 +1587,9 @@ watch(() => state.currentTeamMembers, (newMembers) => {
             </div>
         </div>
 
-        <!-- Create Team Modal -->
-       <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-show="state.showCreateModal">
-           <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700">
+        <!-- Create Team Modal (Keep as is) -->
+       <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showCreateModal">
+           <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8">
                 <h3 class="text-xl font-bold mb-4">创建新队伍</h3>
                 <p class="mb-4 text-sm text-gray-200">组队码 <span class="font-bold text-purple-400">{{ state.teamCode }}</span> 未被使用。请为你的队伍命名：</p>
                 <div class="mb-6">
@@ -1476,7 +1608,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
             </div>
         </div>
 
-        <!-- New: Edit/Delete Member Modal -->
+        <!-- Edit/Delete Member Modal (Keep as is) -->
         <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showEditModal">
             <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8"> <!-- Added some margin for scroll -->
                 <h3 class="text-xl font-bold mb-4 text-center">修改我的信息</h3>
@@ -1591,7 +1723,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                  <div class="mb-6 text-center">
                      <h4 class="text-md font-semibold mb-3 text-red-400">删除报名信息</h4>
                      <p class="text-sm text-gray-300 mb-4">此操作不可撤销。需要输入你的舞萌ID和当前QQ号。</p>
-                    <button type="button" @click="deleteEntry" :disabled="isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="btn-glow bg-red-600 hover:bg-red-700 rounded-lg py-3 px-6 font-bold transition duration-300 text-sm" :class="{'opacity-50 cursor-not-allowed': isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
+                    <button type="button" @click="deleteEntry" :disabled="state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="btn-glow bg-red-600 hover:bg-red-700 rounded-lg py-3 px-6 font-bold transition duration-300 text-sm" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
                          删除我的报名信息
                     </button>
                  </div>
@@ -1599,10 +1731,10 @@ watch(() => state.currentTeamMembers, (newMembers) => {
 
                 <!-- Error message within modal -->
                 <transition name="fade-in-up">
-                <div v-if="state.errorMessage && state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-center" role="alert">
-                    <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0" alt="Error">
-                    <span class="break-words">{{ state.errorMessage }}</span>
-                </div>
+                <div v-if="state.errorMessage && state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                    <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
+                    <span class="break-words flex-grow">{{ state.errorMessage }}</span>
+                 </div>
                 </transition>
 
                 <!-- Action Buttons -->
@@ -1610,28 +1742,32 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                      <button type="button" @click="closeEditModal" class="flex-1 py-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium max-w-[100px]">
                          取消
                      </button>
-                    <button type="button" @click="saveChanges" :disabled="isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
-                         {{ isLoading && !state.errorMessage ? '保存中...' : '保存更改' }}
+                    <button type="button" @click="saveChanges" :disabled="state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
+                         {{ state.showLoadingOverlay ? '保存中...' : '保存更改' }}
                     </button>
                  </div>
 
             </div>
         </div>
 
-        <!-- Loading Overlay (Keep as it is) -->
-        <div class="loading-overlay z-[60]" v-show="state.showLoadingOverlay">
+        <!-- Loading Overlay -->
+        <!-- z-index 40 should be below modals (50) -->
+        <div class="loading-overlay z-40" v-show="state.showLoadingOverlay">
             <div class="spinner"></div>
-            <p class="mt-4 text-white">{{ state.errorMessage ? '发生错误' : '处理中，请稍候...' }}</p>
+             <!-- Show a more specific message if possible -->
+            <p class="mt-4 text-white">
+                 {{ state.errorMessage ? state.errorMessage : '处理中，请稍候...' }}
+            </p>
         </div>
 
-         <!-- Celebration Container (Keep as it is. Lower z-index so content is above) -->
+         <!-- Celebration Container (Lower z-index so content is above) -->
         <div class="celebration z-0" id="celebration"></div>
 
     </div> <!-- End of Root Container -->
 </template>
 
 <style scoped>
-/* Custom styles FROM PREVIOUS CODE - COPY AND PASTE THIS ENTIRE BLOCK */
+/* Custom styles from previous code */
 /* Base styles */
 .glass {
     background: rgba(31, 41, 55, 0.6); /* Darker glass */
@@ -1803,7 +1939,7 @@ input[type="checkbox"]::before {
     width: 8px; /* Size of the checkmark */
     height: 8px;
     background-color: white;
-    mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center center;
+    mask: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="20 6 9 17 4 12"%3E%3C/polyline%3E%3C/svg%3E') no-repeat center center;
     mask-size: contain;
     transition: transform 0.2s ease-in-out;
 }
@@ -1865,13 +2001,14 @@ select.form-input {
     inset: 0; /* top, right, bottom, left = 0 */
     background: rgba(17, 24, 39, 0.8); /* bg-gray-900 with opacity */
     backdrop-filter: blur(4px);
-    z-index: 60; /* Ensure it's above content but potentially below modals if needed */
+    z-index: 40; /* Ensure it's above content but below modals (z-50) */
     display: flex;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     color: white;
     text-align: center;
+    transition: opacity 0.3s ease;
 }
 .spinner {
     border: 4px solid rgba(255, 255, 255, 0.2);
@@ -1921,8 +2058,9 @@ select.form-input {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: 1; /* Ensure confetti is behind interactive elements */
+    z-index: 0; /* Ensure confetti is behind everything else */
     overflow: hidden; /* Prevent scrollbars caused by confetti */
+    pointer-events: none; /* Do not capture mouse events */
 }
 
 /* QR Code & Share Link */
@@ -1954,28 +2092,6 @@ select.form-input {
     background-color: #a78bfa;
     color: white;
 }
-
-/* Responsive adjustments (Ensure main content is centered) */
-/* The flex and mx-auto on the container already handle centering on most screen sizes */
-/* You might still need to debug specific global CSS issues if centering fails */
-
-/* Style for the edit modal confirmation button */
-.modal-confirm-button {
-     /* Define styles similar to btn-glow but perhaps smaller */
-     /* Example: */
-     /* background-color: #a78bfa; */
-     /* color: white; */
-     /* padding: 8px 16px; */
-     /* border-radius: 8px; */
-     /* font-weight: bold; */
-     /* transition: background-color 0.3s ease; */
-}
-/* .modal-confirm-button:hover {
-     background-color: #8b5cf6;
-} */
-
-/* Example styles for select box (if appearance: none is used) */
-/* Need to add real styles for the custom arrow or let browser handle it */
 
 /* Member list avatar border color based on role color */
 /* Add these classes if using border-${color}-500 pattern */
