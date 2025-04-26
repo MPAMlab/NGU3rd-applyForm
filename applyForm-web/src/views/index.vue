@@ -1024,7 +1024,7 @@ onUnmounted(() => {
 
         <!-- Main Content Container, centered with max-width -->
         <div class="w-full max-w-md mx-auto relative z-10"> <!-- Content should be above confetti -->
-
+            
             <!-- Progress Bar (Visible in steps 2-4) -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
@@ -1531,7 +1531,7 @@ onUnmounted(() => {
                          <!-- This button triggers the modal for the CURRENT user -->
                          <button @click="openEditModal(state.maimaiId)" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center mx-auto">
                              <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
-                             <img src="https://unpkg.com/lucide-static@latest/icons/edit.svg" class="w-4 h-4 mr-2" alt="Edit">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/file-pen.svg" class="w-4 h-4 mr-2" alt="Edit">
                              修改我的报名信息
                          </button>
                      </div>
@@ -1559,7 +1559,7 @@ onUnmounted(() => {
                      </div>
 
                      <!-- Share Link Input & Copy Button -->
-                     <div class="flex mb-4">
+                     <div class="flex mb-4 mt-4">
                         <input
                              type="text"
                              id="shareLink"
