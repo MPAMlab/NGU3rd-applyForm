@@ -64,14 +64,11 @@ const progressWidth = computed(() => {
 // 检查颜色是否已被队伍成员占用
 const isColorDisabled = computed(() => (color) => {
     // 在编辑模式下，不禁用当前编辑的成员已选择的颜色/职业
-     // 注意：编辑模式下，这里的 currentTeamMembers 应该是 edit modal 加载时拉取的当前成员完整列表
-     // 但为了简化，这里仍然使用 state.currentTeamMembers （它只包含部分字段），这可能导致编辑模式下颜色/职业禁用逻辑不完全准确。
-     // 理想情况下，编辑模态框需要获取包含完整 color/job 信息的成员数据来做判断。
      if (state.showEditModal && state.editAuthMaimaiId) {
         const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId) === state.editAuthMaimaiId);
          if (memberBeingEdited && memberBeingEdited.color === color) return false;
      }
-     // else, check against all members in the context where currentTeamMembers is populated
+     // else, check against all members
     return state.currentTeamMembers.some(member => member.color === color);
 });
 
@@ -168,17 +165,17 @@ async function handleContinue() {
     } catch (e) {
         console.error('Fetch error checking team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-        // state.showLoadingOverlay = false; // 出错时也要关闭 loading，在 finally 中统一处理
+        state.showLoadingOverlay = false; // 出错时也要关闭 loading
     } finally {
-        // 无论成功或失败，API 调用结束后都关闭 loading overlay
         state.showLoadingOverlay = false;
+        console.log('Finally: showLoadingOverlay set to', state.showLoadingOverlay); // 添加日志确认
     }
 }
 
 // 确认加入现有队伍 (从模态框点击确认)
 function confirmJoinTeam() {
     state.showConfirmModal = false;
-    // state.showLoadingOverlay = false; // Loading overlay is already closed in handleContinue's finally
+    state.showLoadingOverlay = false; // 关闭确认模态框前的 loading
     showStep(2); // 跳转到颜色选择步骤
 }
 
@@ -213,10 +210,6 @@ async function createNewTeam() {
         if (!response.ok) {
              // 使用后端返回的 error 消息
              console.error('API error creating team:', response.status, data);
-             // 如果是组队码冲突，提供更友好的提示
-             if (response.status === 409 && data.error?.includes('already taken')) {
-                  throw new Error(`组队码 ${code} 已被占用，请返回首页重试。`);
-             }
              throw new Error(data.error || `创建队伍失败 (${response.status})`);
         }
 
@@ -229,7 +222,7 @@ async function createNewTeam() {
     } catch (e) {
         console.error('Fetch error creating team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-        // state.showCreateModal = false; // 出错也关闭模态框，在 finally 中统一处理
+        state.showCreateModal = false; // 出错也关闭模态框
     } finally {
         state.showLoadingOverlay = false; // 关闭 loading overlay
     }
@@ -242,36 +235,36 @@ function selectColor(color) {
     }
 }
 
-// Get display text for color ID
+// 获取颜色显示文本
 function getColorText(colorId) {
      const map = { red: '红色', green: '绿色', blue: '蓝色' };
      return map[colorId] || '';
 }
 
-// Get Lucide icon name for color ID
+// 获取颜色对应的 Lucide 图标名称
 function getColorIcon(colorId) {
     const map = { red: 'flame', green: 'leaf', blue: 'droplets' };
-    return map[colorId] || 'help-circle'; // Provide default icon
+    return map[colorId] || 'help-circle'; // 提供默认图标
 }
 
 // 选择职业
 function selectJob(jobId) {
-     const jobType = jobId.replace('job-', ''); // jobId might be 'job-attacker', extract 'attacker'
+     const jobType = jobId.replace('job-', ''); // jobId might be 'job-attacker'
     if (!isJobDisabled.value(jobType)) {
         state.selectedJob = jobType;
     }
 }
 
-// Get display text for job type
+// 获取职业显示文本
 function getJobText(jobType) {
     const map = { attacker: '攻击手', defender: '防御手', supporter: '辅助手' };
     return map[jobType] || '';
 }
 
-// Get Lucide icon name for job type
+// 获取职业对应的 Lucide 图标名称
 function getJobIcon(jobType) {
     const map = { attacker: 'swords', defender: 'shield', supporter: 'heart-pulse' };
-    return map[jobType] || 'help-circle';// Provide default icon
+    return map[jobType] || 'help-circle';// 提供默认图标
 }
 
 // Step 4: 处理头像文件选择和预览
@@ -321,7 +314,7 @@ async function handleSubmitPersonalInfo() {
     state.errorMessage = null;
 
     // 再次验证必填字段
-    if (!state.maimaiId?.trim() || !state.nickname?.trim() || !state.qqNumber?.trim() || !state.privacyAgreed) {
+    if (!state.maimaiId || !state.nickname || !state.qqNumber || !state.privacyAgreed) {
         state.errorMessage = '请填写所有必填字段并同意隐私政策。';
         return;
     }
@@ -329,16 +322,11 @@ async function handleSubmitPersonalInfo() {
          state.errorMessage = '内部错误：颜色或职业未选择。请返回上一步。';
          return;
      }
-    // QQ 号格式验证
+    // QQ 号格式验证 (简单的数字验证)
     if (!/^[1-9][0-9]{4,14}$/.test(state.qqNumber.trim())) {
         state.errorMessage = '请输入有效的QQ号码 (5-15位数字, 非0开头)。';
         return;
     }
-    // 舞萌ID格式验证（可选，如果Maimai ID有固定格式的话）
-    // if (!/^\d{10,13}$/.test(state.maimaiId.trim())) {
-    //      state.errorMessage = '请输入有效的Maimai ID (通常是数字组成)。';
-    //     return;
-    // }
 
     state.showLoadingOverlay = true;
 
@@ -374,21 +362,12 @@ async function handleSubmitPersonalInfo() {
         if (!response.ok) {
              // 如果状态码不是成功 (2xx 或 201)
              console.error('API error joining team:', response.status, data);
-             // 针对后端返回的特定错误进行提示
-             if (response.status === 409) { // Conflict errors
-                 if (data.error?.includes('.color')) throw new Error(`颜色 '${getColorText(state.selectedColor)}' 已被队伍中其他成员占用。`);
-                 if (data.error?.includes('.job')) throw new Error(`职业 '${getJobText(state.selectedJob)}' 已被队伍中其他成员占用。`);
-                 if (data.error?.includes('.maimai_id')) throw new Error(`舞萌ID '${state.maimaiId.trim()}' 已被其他人注册。`);
-                 if (data.error?.includes('already full')) throw new Error(`队伍 ${state.teamCode} 已满，无法加入。`);
-             }
               throw new Error(data.error || `加入队伍失败 (${response.status})`);
         }
 
         // 成功加入，后端返回了更新后的成员列表和队伍信息
         state.completionAllMembers = data.members || []; // 更新 Step 5 显示的成员列表
         state.teamName = data.name; // 确保 teamName 也从成功响应中更新
-         // Clear step 4 form data except possibly team code
-         // No, let's keep them for now, maybe user goes back?
         console.log("Successfully joined team. Data:", data);
         showStep(5);
 
@@ -405,53 +384,48 @@ function copyShareLink() {
     const urlToCopy = shareLinkUrl.value; // 使用计算属性获取链接
     if (!urlToCopy) return;
 
-    // 优先使用 Clipboard API (现代浏览器 추천)
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(urlToCopy).then(() => {
-             showCopySuccess();
-        }).catch(err => {
-            console.error('无法使用 Clipboard API 复制: ', err);
-            // 降级到 execCommand
-            fallbackCopyTextToClipboard(urlToCopy);
-        });
-    } else {
-        // 降级到 execCommand (旧浏览器 또는非 HTTPS 环境)
-         fallbackCopyTextToClipboard(urlToCopy);
-    }
-}
+    navigator.clipboard.writeText(urlToCopy).then(() => {
+        const copyBtn = document.getElementById('copyBtn'); // 确保有这个 ID
+        if (copyBtn) {
+            const originalIconHTML = copyBtn.innerHTML;
+            // 切换到“已复制”图标
+            copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
+            copyBtn.disabled = true; // 暂时禁用按钮
+            setTimeout(() => {
+                copyBtn.innerHTML = originalIconHTML; // 恢复原始图标
+                copyBtn.disabled = false;
+            }, 2000); // 2秒后恢复
+        }
+    }).catch(err => {
+        console.error('无法使用 Clipboard API 复制: ', err);
+        // 备选方法 (可能在非 https 环境或旧浏览器中需要)
+        try {
+            const inputElement = document.createElement('textarea');
+            inputElement.value = urlToCopy;
+            inputElement.style.position = 'absolute';
+            inputElement.style.left = '-9999px'; // 移出视口
+            document.body.appendChild(inputElement);
+            inputElement.select(); // 选中内容
+            document.execCommand('copy'); // 执行复制命令
+            document.body.removeChild(inputElement);
 
-// 降级复制方法
-function fallbackCopyTextToClipboard(text) {
-  const inputElement = document.createElement('textarea');
-  inputElement.value = text;
-  inputElement.style.position = 'absolute';
-  inputElement.style.left = '-9999px';
-  document.body.appendChild(inputElement);
-  inputElement.select();
-  try {
-    document.execCommand('copy');
-    console.log('ExecCommand copy successful!');
-    showCopySuccess();
-  } catch (err) {
-    console.error('ExecCommand copy failed: ', err);
-    alert(`复制失败，请手动复制链接：\n${text}`);
-  } finally {
-    document.body.removeChild(inputElement);
-  }
-}
-
-// 显示复制成功的视觉反馈
-function showCopySuccess() {
-     const copyBtn = document.getElementById('copyBtn');
-     if (copyBtn) {
-         const originalIconHTML = copyBtn.innerHTML;
-         copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
-         copyBtn.disabled = true;
-         setTimeout(() => {
-             copyBtn.innerHTML = originalIconHTML;
-             copyBtn.disabled = false;
-         }, 2000); // 2秒后恢复
-     }
+            // 提供反馈 (同上)
+            const copyBtn = document.getElementById('copyBtn');
+             if (copyBtn) {
+                const originalIconHTML = copyBtn.innerHTML;
+                copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
+                 copyBtn.disabled = true;
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalIconHTML;
+                    copyBtn.disabled = false;
+                }, 2000);
+             }
+        } catch (execErr) {
+            console.error('无法使用 execCommand 复制: ', execErr);
+            // 如果备选方法也失败，提示用户手动复制
+            alert(`复制失败，请手动复制链接：\n${urlToCopy}`);
+        }
+    });
 }
 
 // 返回首页并重置所有相关状态
@@ -464,27 +438,9 @@ function goHome() {
      if (state.editNewAvatarPreviewUrl) {
          URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
      }
-     // 清理 confetti 定时器
-    if (state.confettiInterval) {
-        clearInterval(state.confettiInterval);
-        state.confettiInterval = null;
-         const celebrationDiv = document.getElementById('celebration');
-         if(celebrationDiv) celebrationDiv.innerHTML = '';
-    }
 
-    // 使用最新的初始状态对象来重置状态
-    Object.assign(state, getInitialState());
-
-    // 清理 URL 参数
-    history.replaceState(null, '', window.location.pathname);
-
-    // 回到第一步
-    showStep(1);
-}
-
-// 封装一个函数来获取初始状态，方便重置
-function getInitialState() {
-    return {
+    // 重置所有状态变量到初始值
+    Object.assign(state, {
         currentStep: 1,
         teamCode: null,
         teamName: null,
@@ -496,8 +452,8 @@ function getInitialState() {
         nickname: null,
         qqNumber: null,
         privacyAgreed: false,
-        avatarFile: null,
-        avatarPreviewUrl: null,
+        avatarFile: null, // Step 4 avatar clean
+        avatarPreviewUrl: null, // Step 4 avatar clean
 
         // Reset Edit Modal state
         showEditModal: false,
@@ -507,8 +463,8 @@ function getInitialState() {
         editNewQqNumber: null,
         editNewColor: null,
         editNewJob: null,
-        editNewAvatarFile: null,
-        editNewAvatarPreviewUrl: null,
+        editNewAvatarFile: null, // Edit modal avatar clean
+        editNewAvatarPreviewUrl: null, // Edit modal avatar clean
         editClearAvatarFlag: false,
 
         // Reset UI/API state
@@ -521,21 +477,31 @@ function getInitialState() {
         currentTeamMembers: [],
         completionAllMembers: [],
 
-        confettiInterval: null,
-    };
+        confettiInterval: null, // 确保 confetti 定时器也被清理
+    });
+
+    // 清理 URL 参数
+    history.replaceState(null, '', window.location.pathname);
+
+    // 可选：在这里等待 DOM 重置后，主动触发 Step 1 的动画
+     setTimeout(() => {
+         showStep(1);
+     }, 50); // 短暂延迟确保状态重置
+
 }
 
-// Confetti 动画
+// Confetti 动画 (保持不变，或根据需要调整数量/颜色/时间)
 function createConfetti() {
     const celebrationDiv = document.getElementById('celebration');
     if (!celebrationDiv) return;
     const confettiCount = 20; // 每批生成的纸屑数量
     const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d', '#ff9a9e', '#fad0c4', '#a1c4fd', '#c2e9fb', '#d4fc79']; // 更多颜色
-     const types = ['square', 'circle']; // Confetti shapes (requires corresponding CSS)
+    const types = ['square', 'circle', 'triangle']; // 示例：不同形状 (需要对应 CSS)
 
     for (let i = 0; i < confettiCount; i++) {
         const confetti = document.createElement('div');
-         confetti.classList.add('confetti', types[Math.floor(Math.random() * types.length)]); // Assign random shape class
+        // confetti.classList.add('confetti', types[Math.floor(Math.random() * types.length)]); // 如果有不同形状
+        confetti.classList.add('confetti'); // 沿用单一样式
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
         confetti.style.backgroundColor = randomColor;
 
@@ -543,8 +509,7 @@ function createConfetti() {
         const startX = Math.random() * 120 - 10; // -10% to 110% of viewport width
         confetti.style.left = startX + 'vw';
         // 随机起始垂直位置 (屏幕顶部附近)
-        const startY = -10 - (Math.random() * 20); // -10vh to -30vh
-        confetti.style.top = startY + 'vh';
+        confetti.style.top = -10 - (Math.random() * 20) + 'vh'; // -10vh to -30vh
 
         const size = Math.random() * 10 + 5; // 5px to 15px
         confetti.style.width = size + 'px';
@@ -558,10 +523,8 @@ function createConfetti() {
         // 增加一些旋转让动画更生动
          const startRotate = Math.random() * 360;
          const endRotate = startRotate + (Math.random() > 0.5 ? 360 : -360); // 随机顺/逆时针旋转一周
-         confetti.style.setProperty('--start-y', `${startY}vh`); // Pass start Y as CSS var
-         confetti.style.setProperty('--start-x', `${startX}vw`); // Pass start X as CSS var
-         confetti.style.setProperty('--start-rotate', `${startRotate}deg`); // Pass start rotation as CSS var
-         confetti.style.setProperty('--end-rotate', `${endRotate}deg`); // Pass end rotation as CSS var
+         confetti.style.setProperty('--start-rotate', `${startRotate}deg`);
+         confetti.style.setProperty('--end-rotate', `${endRotate}deg`);
 
         celebrationDiv.appendChild(confetti);
 
@@ -573,12 +536,13 @@ function createConfetti() {
 // --- Edit/Delete Modal Functions ---
 
 // 打开修改信息模态框
+// 可以在 Step 5 点击某个按钮时调用，可能需要传入当前成员的唯一标识（如 maimaiId）
 function openEditModal() {
-   // Reset modal form fields to empty/null state when opening
-   // If you wanted to pre-fill, you'd need to fetch the member's current data first.
-   // For this simplified version, user inputs auth + new values.
-   state.editAuthMaimaiId = state.maimaiId; // Optional: pre-fill Maimai ID if available from join step
-   state.editAuthQqNumber = null; // Require re-entry of QQ for auth
+   // TODO: 如果希望在打开时加载当前用户信息，需要一个 API 来获取当前用户信息
+   // 或者让用户自己输入 maimaiId 和 QQ 来拉取信息（更复杂）
+   // 目前简化处理：用户直接输入 maimaiId 和 QQ 进行验证和修改
+   state.editAuthMaimaiId = null;
+   state.editAuthQqNumber = null;
    state.editNewNickname = null;
    state.editNewQqNumber = null;
    state.editNewColor = null;
@@ -586,8 +550,7 @@ function openEditModal() {
    state.editNewAvatarFile = null;
    state.editNewAvatarPreviewUrl = null;
    state.editClearAvatarFlag = false;
-   state.errorMessage = null; // Clear error messages from previous attempts
-
+   state.errorMessage = null; // Clear error messages when opening modal
    state.showEditModal = true;
 }
 
@@ -600,9 +563,8 @@ function closeEditModal() {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
         state.editNewAvatarPreviewUrl = null;
     }
-    // Clean up the file input value itself to allow selecting the same file again
-     const editAvatarInput = document.getElementById('edit-avatar-upload');
-     if(editAvatarInput) editAvatarInput.value = null;
+    // Optionally reset form fields if you don't want them to persist on next open
+    // openEditModal(); // This would reset fields but doesn't change modal visibility
 }
 
 // 处理模态框中的新头像文件选择和预览
@@ -648,6 +610,20 @@ function handleEditAvatarChange(event) {
      state.editClearAvatarFlag = false;
 }
 
+// 移除模态框中选中的新头像文件
+function removeEditAvatar() {
+    state.editNewAvatarFile = null;
+    if (state.editNewAvatarPreviewUrl) {
+        URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
+        state.editNewAvatarPreviewUrl = null;
+    }
+    // Reset the file input element visually if needed (might require a ref or key)
+     const editAvatarInput = document.getElementById('edit-avatar-upload');
+     if(editAvatarInput) editAvatarInput.value = null; // Clear the file input value
+
+     console.log("Edit modal: New avatar file removed.");
+}
+
 // 提交修改信息 (API: PATCH /api/members/:maimaiId)
 async function saveChanges() {
     state.errorMessage = null;
@@ -671,15 +647,6 @@ async function saveChanges() {
           state.errorMessage = '新昵称长度需在1到50个字符之间。';
           return;
      }
-     // Validate new color/job if provided but disabled (shouldn't happen with correct UI, but safety)
-     if (state.editNewColor && isColorDisabled.value(state.editNewColor)) {
-         state.errorMessage = `选择的颜色 '${getColorText(state.editNewColor)}' 已有人使用。`;
-         return;
-     }
-     if (state.editNewJob && isJobDisabled.value(state.editNewJob)) {
-          state.errorMessage = `选择的职业 '${getJobText(state.editNewJob)}' 已有人使用。`;
-         return;
-     }
 
     state.showLoadingOverlay = true;
 
@@ -692,8 +659,8 @@ async function saveChanges() {
         // Trim values to avoid sending whitespace-only updates
         if (state.editNewNickname !== null && state.editNewNickname.trim() !== '') formData.append('nickname', state.editNewNickname.trim());
         if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '') formData.append('qqNumber', state.editNewQqNumber.trim());
-        if (state.editNewColor !== null && state.editNewColor !== '') formData.append('color', state.editNewColor); // Send empty string if cleared? No, only changed.
-        if (state.editNewJob !== null && state.editNewJob !== '') formData.append('job', state.editNewJob); // Send empty string if cleared? No, only changed.
+        if (state.editNewColor !== null && state.editNewColor !== '') formData.append('color', state.editNewColor);
+        if (state.editNewJob !== null && state.editNewJob !== '') formData.append('job', state.editNewJob);
 
         // Handle avatar changes
         if (state.editNewAvatarFile) {
@@ -707,13 +674,6 @@ async function saveChanges() {
              console.log("Appending clearAvatar=true for update.");
         }
         // If neither a new file is selected nor clearAvatar is checked, do nothing about avatar.
-
-        // 如果没有任何字段被修改，也没有头像更新/清空，提示用户
-        if (formData.entries().next().done && !state.editNewAvatarFile && !state.editClearAvatarFlag) {
-             state.errorMessage = '没有检测到任何需要修改的信息。';
-             state.showLoadingOverlay = false;
-             return; // Exit the function early
-        }
 
         console.log("Sending PATCH request to:", `${API_BASE_URL}/members/${state.editAuthMaimaiId.trim()}`);
         // Log formData contents (for debugging)
@@ -730,16 +690,6 @@ async function saveChanges() {
 
         if (!response.ok) {
              console.error('API error saving changes:', response.status, data);
-              // Specific error messages based on backend response
-              if (response.status === 401 || response.status === 403) {
-                  throw new Error('验证失败：舞萌ID或当前QQ号不正确。');
-              }
-               if (response.status === 409) { // Conflict errors
-                 if (data.error?.includes('.color')) throw new Error(`修改失败：颜色已有人使用。`);
-                 if (data.error?.includes('.job')) throw new Error(`修改失败：职业已有人使用。`);
-                 // Maimai ID conflict during update is unlikely with unique constraint, but possible if backend allows Maimai ID change (which our backend code doesn't)
-             }
-
              throw new Error(data.error || `保存修改失败 (${response.status})`);
         }
 
@@ -753,50 +703,35 @@ async function saveChanges() {
              const index = state.completionAllMembers.findIndex(m => (m.maimai_id || m.maimaiId) === (data.member.maimai_id || data.member.maimaiId));
              if (index !== -1) {
                  // Update the member object in the array using reactive Vue method
-                 // Use Object.assign or spread to ensure reactivity and keep other properties
-                 Object.assign(state.completionAllMembers[index], data.member);
+                 state.completionAllMembers[index] = { ...state.completionAllMembers[index], ...data.member };
                  console.log("Updated member in completionAllMembers array.");
              } else {
-                 // This case is less likely if the user is on step 5 and editing themselves
-                console.warn("Updated member (by Maimai ID) not found in completionAllMembers array after PATCH.");
-                // Fallback: Re-fetch the whole team data if needed (more complex, requires teamCode and a fetchTeamData function)
-                // Example: fetchTeamData(state.teamCode);
+                console.warn("Updated member not found in completionAllMembers array after PATCH.");
+                // Fallback: Re-fetch the whole team data if needed (more complex)
+                // await fetchTeamData(state.teamCode); // Need a separate function for this
              }
-             // Also update currentTeamMembers if they are currently populated (e.g., if user goes back to steps 2/3 after editing)
-             // Note: currentTeamMembers in step 2/3 only have color, job, nickname, avatar_url
-              const indexCurrent = state.currentTeamMembers.findIndex(m => (m.maimai_id || m.maimaiId) === (data.member.maimai_id || data.member.maimaiId));
+             // Also update currentTeamMembers if they are currently displayed (e.g., if user goes back)
+             const indexCurrent = state.currentTeamMembers.findIndex(m => (m.maimai_id || m.maimaiId) === (data.member.maimai_id || data.member.maimaiId));
               if (indexCurrent !== -1) {
-                   // Update only the fields available in the currentTeamMembers definition
+                   // Note: currentTeamMembers in step 2/3 only have color, job, nickname, avatar_url
                   state.currentTeamMembers[indexCurrent] = {
-                       ...state.currentTeamMembers[indexCurrent], // Keep other properties (like internal ID if it was there)
+                       ...state.currentTeamMembers[indexCurrent],
                        color: data.member.color,
                        job: data.member.job,
                        nickname: data.member.nickname,
-                       avatar_url: data.member.avatar_url,
+                       avatar_url: data.member.avatar_url, // Update avatar URL here too
                    };
-                   console.log("Updated member in currentTeamMembers array.");
               }
-
-         } else {
-             console.warn("PATCH response from API did not include updated member data.");
-             // You might need to refetch team data here if the API doesn't return the member
-             // await fetchTeamData(state.teamCode);
          }
 
-        // Close the modal after successful save (show success message first briefly if possible)
-         // Maybe set a timeout before closing modal to let user see success message
-         state.showLoadingOverlay = false; // Hide loading immediately
-         setTimeout(() => {
-              closeEditModal(); // Close modal after a short delay
-              state.errorMessage = null; // Clear success message after closing modal
-         }, 1500); // Show success for 1.5 seconds
+        // Close the modal after successful save
+        closeEditModal(); // Will also clean up modal avatar preview
 
     } catch (e) {
         console.error('Fetch error saving changes:', e);
         state.errorMessage = e.message || '保存修改失败，请稍后再试。';
-        state.showLoadingOverlay = false;
     } finally {
-        // No final logic needed here if handling loading and closing within try/catch and timeouts
+        state.showLoadingOverlay = false;
     }
 }
 
@@ -839,40 +774,34 @@ async function deleteEntry() {
              console.log('Deletion successful (received 204 No Content).');
              state.errorMessage = '报名信息已成功删除。'; // Success message
 
-              // Remove the deleted member from the completionAllMembers array by filtering
+              // Remove the deleted member from the completionAllMembers array
              state.completionAllMembers = state.completionAllMembers.filter(
                   member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
              );
-              // Also remove from currentTeamMembers array
+              // Also remove from currentTeamMembers if applicable
              state.currentTeamMembers = state.currentTeamMembers.filter(
                  member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
              );
 
-             // Decide navigation after successful deletion
-             state.showLoadingOverlay = false; // Hide loading immediately
-             closeEditModal(); // Close modal
-
-             // If user deleted their own entry (check if state.maimaiId matches)
-             const deletedOwnEntry = state.maimaiId === state.editAuthMaimaiId.trim();
-
-             // If the team is now empty, or user deleted their own entry, go home
-             if (state.completionAllMembers.length === 0 || deletedOwnEntry) {
-                  console.log("Redirecting home after deletion (empty team or self-delete).");
-                  // Show success message briefly then go home
-                  setTimeout(goHome, 2000);
-             } else {
-                 // Team is not empty and user deleted someone else's entry (less likely with simple auth) or just deleted one member
-                 // Stay on step 5, list has been updated
-                  console.log("Staying on step 5 after deletion (list updated).");
-                  // Success message will remain visible for a moment
-                  setTimeout(() => { state.errorMessage = null; }, 2000); // Clear success message
+             // If the deleted member was the last one, maybe redirect or show different message?
+             if (state.completionAllMembers.length === 0) {
+                  console.log("Team is now empty after deletion.");
+                  // Optional: Go back to step 1 or home page if the team is now empty
+                  setTimeout(goHome, 2000); // Go home after a short delay
              }
+
+             // Close the modal and potentially go back to a relevant step or homepage
+             closeEditModal();
+             // If user deleted their own entry and team is empty, maybe go home...
+             // If they deleted someone else's or team isn't empty, stay on step 5
+             // For simplicity, let's just close the modal and update the list.
+             // If the team is empty, goHome is called via the check above.
 
          } else if (response.ok) {
              // Should ideally be 204, but handle other 2xx if backend changes
-             const data = await response.json(); // Expect data even on non-204 success?
-              console.log('Deletion successful (unexpected 2xx, data returned):', data);
-              state.errorMessage = data.message || '报名信息已成功删除。'; // Use backend success message if available
+             const data = await response.json();
+              console.log('Deletion successful (unexpected 2xx):', data);
+              state.errorMessage = '报名信息已成功删除。'; // Success message - adjust if needed
               // Update lists similar to the 204 case
               state.completionAllMembers = state.completionAllMembers.filter(
                    member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
@@ -880,11 +809,8 @@ async function deleteEntry() {
                state.currentTeamMembers = state.currentTeamMembers.filter(
                   member => (member.maimai_id || member.maimaiId) !== state.editAuthMaimaiId.trim()
                );
-              state.showLoadingOverlay = false;
               closeEditModal();
-               const deletedOwnEntry = state.maimaiId === state.editAuthMaimaiId.trim();
-              if (state.completionAllMembers.length === 0 || deletedOwnEntry) { setTimeout(goHome, 2000); }
-              else { setTimeout(() => { state.errorMessage = null; }, 2000); }
+              if (state.completionAllMembers.length === 0) { setTimeout(goHome, 2000); }
 
          } else {
              // Handle error response (non-2xx/non-204)
@@ -901,9 +827,8 @@ async function deleteEntry() {
              errorMsg = 'Maimai ID 或 QQ 号不匹配，无法验证身份。';
          }
         state.errorMessage = errorMsg;
-        state.showLoadingOverlay = false; // Hide loading on error
     } finally {
-        // No final logic needed here if handling loading and closing within try/catch and timeouts
+        state.showLoadingOverlay = false;
     }
 }
 
@@ -914,15 +839,17 @@ onMounted(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
 
-    // 如果 URL 中有有效的组队码，则填充并自动触发检查
     if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
         state.teamCode = codeParam;
-        handleContinue(); // 自动触发检查，然后根据结果显示模态框或跳转
+        handleContinue(); // 自动触发检查
     } else {
-        // 如果没有组队码参数，确保停留在步骤 1 并显示内容
-        showStep(getInitialState().currentStep); // Use initial state's step (which is 1)
+       showStep(state.currentStep); // 确保显示初始步骤
     }
 
+    // PC 居中问题：Flexbox 布局已经在 root div 和 .container 上应用，
+    // 如果依然不居中，可能是父级元素或全局 CSS 影响了 flex 布局或宽度。
+    // 检查 body, html 的 height/min-height 属性是否允许 flex 容器撑满屏幕。
+    // 确保没有其他 CSS 规则覆盖了 flexbox 属性或 container 的 margin/max-width。
 });
 
 onUnmounted(() => {
@@ -958,7 +885,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
     <!-- Added more responsive padding and ensured full height -->
     <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 overflow-hidden relative"> <!-- overflow hidden to prevent layout shift from confetti -->
 
-        <!-—— Main Content Container -->
+        <!-- Main Content Container -->
         <!-- Use max-w-md for larger breakpoint, always mx-auto for centering -->
         <div class="w-full max-w-md mx-auto">
              <!-- Adjust z-index to control stacking order -->
@@ -977,18 +904,17 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 </div>
             </div>
 
-             <!-—— 错误消息显示区域 (全局，会显示在 loading 后面) -->
+             <!-- 错误消息显示区域 -->
              <!-- Use fade-in-up for transition -->
              <transition name="fade-in-up">
-                 <div v-if="state.errorMessage && !state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-center" role="alert">
+                 <div v-if="state.errorMessage" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-center" role="alert">
                      <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0" alt="Error">
                      <span class="break-words">{{ state.errorMessage }}</span> <!-- Allow text to wrap -->
                 </div>
              </transition>
 
             <!-- Step 1: 组队码输入 -->
-            <!-- Use v-if for cleaner DOM when steps are not active -->
-            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1">
+            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1"> <!-- Use v-if for cleaner DOM -->
                 <!-- Header -->
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
@@ -1033,11 +959,11 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 <!-- Team Info Box -->
                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
                      <div class="flex items-center">
-                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
+                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md">
                              <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
-                            <h3 class="font-bold text-gray-200">{{ state.teamName || '队伍名称' }}</h3>
+                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
                              <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
                         </div>
                     </div>
@@ -1051,7 +977,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                         <div class="color-red-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
                              <img src="https://unpkg.com/lucide-static@latest/icons/flame.svg" class="w-10 h-10 text-white" :alt="getColorText('red')">
                         </div>
-                        <p class="text-center font-medium text-sm text-gray-200">{{ getColorText('red') }}</p>
+                        <p class="text-center font-medium text-sm">{{ getColorText('red') }}</p>
                     </div>
                      <div role="button" tabindex="0" class="color-option"
                          :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }"
@@ -1059,7 +985,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                         <div class="color-green-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
                              <img src="https://unpkg.com/lucide-static@latest/icons/leaf.svg" class="w-10 h-10 text-white" :alt="getColorText('green')">
                         </div>
-                        <p class="text-center font-medium text-sm text-gray-200">{{ getColorText('green') }}</p>
+                        <p class="text-center font-medium text-sm">{{ getColorText('green') }}</p>
                     </div>
                      <div role="button" tabindex="0" class="color-option"
                          :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }"
@@ -1067,7 +993,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                         <div class="color-blue-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
                              <img src="https://unpkg.com/lucide-static@latest/icons/droplets.svg" class="w-10 h-10 text-white" :alt="getColorText('blue')">
                         </div>
-                        <p class="text-center font-medium text-sm text-gray-200">{{ getColorText('blue') }}</p>
+                        <p class="text-center font-medium text-sm">{{ getColorText('blue') }}</p>
                     </div>
                 </div>
 
@@ -1094,7 +1020,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                               </div>
 
                             <div>
-                                <p class="font-medium text-sm text-gray-200">{{ member.nickname }}</p>
+                                <p class="font-medium text-sm">{{ member.nickname }}</p>
                                 <p class="text-xs text-gray-300 flex items-center flex-wrap">
                                      <span class="flex items-center mr-2">
                                          <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
@@ -1112,7 +1038,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                  <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
                 </button>
-                <button type="button" @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                <button @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回首页
                 </button>
             </div>
@@ -1133,7 +1059,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                                 <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                             </div>
                             <div>
-                                <h3 class="font-bold text-gray-200">{{ state.teamName || '队伍名称' }}</h3>
+                                <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
                                  <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
                             </div>
                          </div>
@@ -1155,7 +1081,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                          <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                             <img src="https://unpkg.com/lucide-static@latest/icons/swords.svg" class="w-10 h-10 text-white" :alt="getJobText('attacker')">
                         </div>
-                        <p class="text-center font-medium text-sm text-gray-200">{{ getJobText('attacker') }}</p>
+                        <p class="text-center font-medium text-sm">{{ getJobText('attacker') }}</p>
                     </div>
                     <div role="button" tabindex="0" class="job-option"
                          :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
@@ -1163,7 +1089,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                          <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                             <img src="https://unpkg.com/lucide-static@latest/icons/shield.svg" class="w-10 h-10 text-white" :alt="getJobText('defender')">
                         </div>
-                        <p class="text-center font-medium text-sm text-gray-200">{{ getJobText('defender') }}</p>
+                        <p class="text-center font-medium text-sm">{{ getJobText('defender') }}</p>
                     </div>
                     <div role="button" tabindex="0" class="job-option"
                          :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
@@ -1171,7 +1097,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                         <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                             <img src="https://unpkg.com/lucide-static@latest/icons/heart-pulse.svg" class="w-10 h-10 text-white" :alt="getJobText('supporter')">
                         </div>
-                        <p class="text-center font-medium text-sm text-gray-200">{{ getJobText('supporter') }}</p>
+                        <p class="text-center font-medium text-sm">{{ getJobText('supporter') }}</p>
                     </div>
                 </div>
 
@@ -1198,7 +1124,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                               </div>
 
                             <div>
-                                <p class="font-medium text-sm text-gray-200">{{ member.nickname }}</p>
+                                <p class="font-medium text-sm">{{ member.nickname }}</p>
                                 <p class="text-xs text-gray-300 flex items-center flex-wrap">
                                      <span class="flex items-center mr-2">
                                          <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
@@ -1279,8 +1205,6 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                             <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
 
                             <button v-if="state.avatarFile" type="button" @click="handleAvatarChange({ target: { files: [] }})" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
-                             <!-- File validation error feedback -->
-                             <p v-if="state.errorMessage && state.errorMessage.includes('图片')" class="text-red-400 text-xs mt-1">{{ state.errorMessage }}</p>
                         </div>
                     </div>
 
@@ -1298,7 +1222,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
 
                     <div class="mb-6">
                         <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
-                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="方便队长联系 (e.g., 123456789)" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
+                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="方便队长联系 (非0开头，5-15位数字)" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
                          <p class="mt-1 text-xs text-gray-400">用于验证你的身份，请务必准确填写。</p>
                     </div>
 
@@ -1342,7 +1266,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                         <img src="https://unpkg.com/lucide-static@latest/icons/check-circle.svg" class="w-12 h-12 text-white" alt="Success">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">注册成功！</h1>
-                    <p class="text-teal-300">你已成功加入“<span class="font-bold text-gray-200">{{ state.teamName || '队伍' }}</span>”</p>
+                    <p class="text-teal-300">你已成功加入“<span class="font-bold">{{ state.teamName || '队伍' }}</span>”</p>
                 </div>
 
                 <!-- Team Info Box -->
@@ -1352,7 +1276,7 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                              <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                          </div>
                          <div>
-                            <h3 class="font-bold text-gray-200">{{ state.teamName || '队伍名称' }}</h3>
+                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
                              <p class="text-xs text-gray-400">
                                  {{ state.teamCode || '----' }} · 成员: {{ state.completionAllMembers.length }}/3
                                  <span v-if="state.completionAllMembers.length === 3" class="ml-1 text-green-400 font-bold">(队伍已满)</span>
@@ -1372,15 +1296,14 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                                  v-if="member.avatar_url"
                                  :src="member.avatar_url"
                                  alt="头像"
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
                                  class="rounded-full w-10 h-10 object-cover mr-3 flex-shrink-0 border-2 border-gray-600"
                                  :class="[`border-${member.color}-500`]"
                              >
-                             <!-- Default icon if no avatar_url or image fails to load -->
+                             <!-- Default icon if no avatar_url -->
                               <div
+                                v-else
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-10 h-10 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border-2 border-gray-600"
-                                :style="{ display: (member.avatar_url && !member.avatar_error) ? 'none' : 'flex' }"
                               >
                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-5 h-5 text-white" :alt="getColorText(member.color)">
                               </div>
@@ -1388,12 +1311,10 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                              <!-- Member Details -->
                             <div class="flex-grow">
                                  <!-- Check against both maimai_id (from DB) and maimaiId (from user input state) -->
-                                <p class="font-medium text-sm flex items-center text-gray-200">
+                                <p class="font-medium text-sm flex items-center">
                                     {{ member.nickname }}
                                     <span v-if="(member.maimai_id || member.maimaiId) === state.maimaiId" class="ml-2 text-xs bg-purple-600 px-1.5 py-0.5 rounded text-white font-bold">你</span>
                                 </p>
-                                 <!-- Only display QQ if you want it shown publicly on this page -->
-                                <!-- <p class="text-xs text-gray-300">QQ: {{ member.qq_number }}</p> -->
                                 <p class="text-xs text-gray-300 flex items-center flex-wrap">
                                     <span class="flex items-center mr-2">
                                         <span :class="`color-indicator color-${member.color}-bg`"></span>
@@ -1410,11 +1331,10 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                         </div>
                     </div>
                      <!-- Button to trigger Edit Modal -->
-                     <!-- Only show edit button if user has registered and is potentially viewing their own entry -->
                      <div class="mt-6 text-center">
                          <button @click="openEditModal" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center mx-auto">
                              <img src="https://unpkg.com/lucide-static@latest/icons/edit.svg" class="w-4 h-4 mr-2" alt="Edit">
-                             修改我的报名信息 / 删除
+                             修改我的报名信息
                          </button>
                      </div>
                 </div>
@@ -1488,15 +1408,14 @@ watch(() => state.currentTeamMembers, (newMembers) => {
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10"> <!-- Ensure footer is above confetti -->
                 <!-- 使用环境变量中的域名 -->
-                 <p>© {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.value.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
+                 <p>© {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
             </div>
 
         </div> <!-- End of Container -->
 
         <!-- Modals -->
         <!-- Confirm Join Modal -->
-        <transition name="modal-fade">
-        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-if="state.showConfirmModal"> <!-- Use v-if for modal lifecycle handling -->
+        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-show="state.showConfirmModal">
             <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700">
                 <h3 class="text-xl font-bold mb-4">确认加入队伍</h3>
                 <p class="mb-6 text-sm text-gray-200">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍。当前成员 <span class="font-bold">{{ state.currentTeamMembers.length }}</span>/3。</p>
@@ -1509,7 +1428,6 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                                  v-if="member.avatar_url"
                                  :src="member.avatar_url"
                                  alt="头像"
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
                                  class="rounded-full w-6 h-6 object-cover mr-2 flex-shrink-0 border border-gray-600"
                                  :class="[`border-${member.color}-500`]"
                              >
@@ -1517,7 +1435,6 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                                 v-else
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-6 h-6 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm border border-gray-600"
-                                 :style="{ display: (member.avatar_url && !member.avatar_error) ? 'none' : 'flex' }"
                               >
                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-3 h-3 text-white" :alt="getColorText(member.color)">
                               </div>
@@ -1537,35 +1454,30 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                 </div>
             </div>
         </div>
-        </transition>
 
         <!-- Create Team Modal -->
-        <transition name="modal-fade">
-       <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-if="state.showCreateModal"> <!-- Use v-if -->
+       <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-show="state.showCreateModal">
            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700">
                 <h3 class="text-xl font-bold mb-4">创建新队伍</h3>
                 <p class="mb-4 text-sm text-gray-200">组队码 <span class="font-bold text-purple-400">{{ state.teamCode }}</span> 未被使用。请为你的队伍命名：</p>
                 <div class="mb-6">
                     <label for="newTeamName" class="block text-sm font-medium text-purple-300 mb-2">队伍名称 <span class="text-red-500">*</span></label>
-                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：银河战舰" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50" @keydown.enter="createNewTeam">
-                     <!-- Error specific to modal -->
+                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：银河战舰" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20" @keydown.enter="createNewTeam">
                      <p v-if="state.errorMessage && state.showCreateModal" class="mt-2 text-xs text-red-400">{{ state.errorMessage }}</p>
                 </div>
                 <div class="flex space-x-4">
-                    <button type="button" @click="state.showCreateModal = false; state.errorMessage = null; state.showLoadingOverlay = false;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
+                    <button type="button" @click="state.showCreateModal = false; state.errorMessage = null;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
                         取消
                     </button>
-                    <button type="button" @click="createNewTeam" :disabled="!state.newTeamName?.trim() || state.showLoadingOverlay" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': !state.newTeamName?.trim() || state.showLoadingOverlay}">
-                         {{ state.showLoadingOverlay ? '正在创建...' : '确认创建' }}
+                    <button type="button" @click="createNewTeam" :disabled="!state.newTeamName?.trim()" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': !state.newTeamName?.trim()}">
+                        确认创建
                     </button>
                 </div>
             </div>
         </div>
-        </transition>
 
         <!-- New: Edit/Delete Member Modal -->
-         <transition name="modal-fade">
-        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-if="state.showEditModal"> <!-- Use v-if -->
+        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showEditModal">
             <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8"> <!-- Added some margin for scroll -->
                 <h3 class="text-xl font-bold mb-4 text-center">修改我的信息</h3>
                  <p class="mb-6 text-sm text-gray-300 text-center">请验证你的身份后修改或删除信息。</p>
@@ -1679,13 +1591,13 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                  <div class="mb-6 text-center">
                      <h4 class="text-md font-semibold mb-3 text-red-400">删除报名信息</h4>
                      <p class="text-sm text-gray-300 mb-4">此操作不可撤销。需要输入你的舞萌ID和当前QQ号。</p>
-                    <button type="button" @click="deleteEntry" :disabled="state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="btn-glow bg-red-600 hover:bg-red-700 rounded-lg py-3 px-6 font-bold transition duration-300 text-sm" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
+                    <button type="button" @click="deleteEntry" :disabled="isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="btn-glow bg-red-600 hover:bg-red-700 rounded-lg py-3 px-6 font-bold transition duration-300 text-sm" :class="{'opacity-50 cursor-not-allowed': isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
                          删除我的报名信息
                     </button>
                  </div>
                  <hr class="my-6 border-gray-700">
 
-                 <!-—— Error message within modal -->
+                <!-- Error message within modal -->
                 <transition name="fade-in-up">
                 <div v-if="state.errorMessage && state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-center" role="alert">
                     <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0" alt="Error">
@@ -1698,32 +1610,28 @@ watch(() => state.currentTeamMembers, (newMembers) => {
                      <button type="button" @click="closeEditModal" class="flex-1 py-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium max-w-[100px]">
                          取消
                      </button>
-                    <button type="button" @click="saveChanges" :disabled="state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
-                         {{ state.showLoadingOverlay && !state.errorMessage ? '保存中...' : '保存更改' }}
+                    <button type="button" @click="saveChanges" :disabled="isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': isLoading || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
+                         {{ isLoading && !state.errorMessage ? '保存中...' : '保存更改' }}
                     </button>
                  </div>
 
             </div>
         </div>
-         </transition>
 
-        <!-- Loading Overlay (Keep as it is, z-index 60) -->
-         <!-- Use v-if for better performance when not shown -->
-        <div class="loading-overlay z-[60]" v-if="state.showLoadingOverlay">
+        <!-- Loading Overlay (Keep as it is) -->
+        <div class="loading-overlay z-[60]" v-show="state.showLoadingOverlay">
             <div class="spinner"></div>
-             <!-- Dynamic message based on error state -->
-            <p class="mt-4 text-white">{{ state.errorMessage ? '发生错误，请查看详情' : '数据处理中，请稍候...' }}</p>
+            <p class="mt-4 text-white">{{ state.errorMessage ? '发生错误' : '处理中，请稍候...' }}</p>
         </div>
 
          <!-- Celebration Container (Keep as it is. Lower z-index so content is above) -->
-         <!-- Use v-if to only render when needed -->
-        <div class="celebration z-0" id="celebration" v-if="state.currentStep === 5"></div>
+        <div class="celebration z-0" id="celebration"></div>
 
     </div> <!-- End of Root Container -->
 </template>
 
 <style scoped>
-/* Custom styles FROM PREVIOUS CODE & ADDED/MODIFIED STYLES */
+/* Custom styles FROM PREVIOUS CODE - COPY AND PASTE THIS ENTIRE BLOCK */
 /* Base styles */
 .glass {
     background: rgba(31, 41, 55, 0.6); /* Darker glass */
@@ -1744,20 +1652,12 @@ watch(() => state.currentTeamMembers, (newMembers) => {
     box-shadow: 0 0 15px rgba(167, 139, 250, 0.6), 0 0 30px rgba(124, 58, 237, 0.5);
     transform: translateY(-2px);
 }
-
-/* Transitions */
 /* Transition for step content - using name="fade-in" */
-/* Apply transitions only when v-if is used on steps */
 .fade-in-enter-active, .fade-in-leave-active {
-  transition: opacity 0.5s ease, transform 0.5s ease;
+  transition: opacity 0.5s ease;
 }
-.fade-in-enter-from {
+.fade-in-enter-from, .fade-in-leave-to {
   opacity: 0;
-  transform: translateY(20px); /* Enter from slightly below */
-}
-.fade-in-leave-to {
-  opacity: 0;
-  transform: translateY(-20px); /* Exit upwards */
 }
 
 /* Transition for error message - name="fade-in-up" */
@@ -1768,24 +1668,6 @@ watch(() => state.currentTeamMembers, (newMembers) => {
   opacity: 0;
   transform: translateY(10px); /* Start slightly below */
 }
-
-/* Transition for modals - name="modal-fade" */
-.modal-fade-enter-active, .modal-fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.modal-fade-enter-from, .modal-fade-leave-to {
-  opacity: 0;
-}
-/* Optional: Add scale or slide transition for modal content itself */
-/*
-.modal-fade-enter-active .glass, .modal-fade-leave-active .glass {
-  transition: all 0.3s cubic-bezier(0.68, -0.55, 0.27, 1.55);
-}
-.modal-fade-enter-from .glass, .modal-fade-leave-to .glass {
-  transform: scale(0.9);
-  opacity: 0;
-}
-*/
 
 /* Selection Options (Color/Job) */
 .color-option, .job-option {
@@ -1912,18 +1794,18 @@ input[type="checkbox"] {
    vertical-align: middle; /* Align with text */
 }
 input[type="checkbox"]::before {
-  content: '';
-  display: block;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) scale(0);
-  width: 8px; /* Size of the checkmark */
-  height: 8px;
-  background-color: white;
-  mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center center;
-  mask-size: contain;
-  transition: transform 0.2s ease-in-out;
+    content: '';
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    width: 8px; /* Size of the checkmark */
+    height: 8px;
+    background-color: white;
+    mask: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center center;
+    mask-size: contain;
+    transition: transform 0.2s ease-in-out;
 }
 input[type="checkbox"]:checked {
   background-color: #8b5cf6; /* Purple check */
@@ -2016,17 +1898,12 @@ select.form-input {
     /* mix-blend-mode: screen; Consider removing or adjusting based on desired effect */
     opacity: 0.8; /* Slightly less opaque */
     /* New: Add rotation properties */
-    transform: translateY(var(--start-y, -20px)) translateX(var(--start-x, 0)) rotate(var(--start-rotate, 0deg)) scale(1);
+    transform: translateY(var(--start-y, -20px)) translateX(var(--start-x, 0)) rotate(var(--start-rotate, 0deg));
 }
-/* Confetti shapes - requires corresponding classes applied in JS */
-.confetti.square { border-radius: 0; }
-.confetti.circle { border-radius: 50%; }
-/* .confetti.triangle { ...; transform: rotate(var(--start-rotate, 0deg)); clip-path: polygon(50% 0%, 0% 100%, 100% 100%); } */ /* Triangle shape */
-
 @keyframes confetti-fall {
     0% {
          opacity: 1;
-         transform: translateY(var(--start-y, -20vh)) translateX(var(--start-x, 0vw)) rotate(var(--start-rotate, 0deg)) scale(1);
+         transform: translateY(var(--start-y, -20px)) translateX(var(--start-x, 0)) rotate(var(--start-rotate, 0deg)) scale(1);
     }
      100% {
         opacity: 0;
@@ -2078,6 +1955,28 @@ select.form-input {
     color: white;
 }
 
+/* Responsive adjustments (Ensure main content is centered) */
+/* The flex and mx-auto on the container already handle centering on most screen sizes */
+/* You might still need to debug specific global CSS issues if centering fails */
+
+/* Style for the edit modal confirmation button */
+.modal-confirm-button {
+     /* Define styles similar to btn-glow but perhaps smaller */
+     /* Example: */
+     /* background-color: #a78bfa; */
+     /* color: white; */
+     /* padding: 8px 16px; */
+     /* border-radius: 8px; */
+     /* font-weight: bold; */
+     /* transition: background-color 0.3s ease; */
+}
+/* .modal-confirm-button:hover {
+     background-color: #8b5cf6;
+} */
+
+/* Example styles for select box (if appearance: none is used) */
+/* Need to add real styles for the custom arrow or let browser handle it */
+
 /* Member list avatar border color based on role color */
 /* Add these classes if using border-${color}-500 pattern */
 /* Example */
@@ -2085,25 +1984,17 @@ select.form-input {
 .border-green-500 { border-color: #22c55e; }
 .border-blue-500 { border-color: #3b82f6; }
 
-/* --- Additional Modal & Form Styling for Clarity --- */
-.modal h3, .modal h4 {
-    color: #a78bfa; /* Purple color for modal headings */
-}
-.modal .form-input {
-     /* Ensure modal inputs have appropriate background/border */
-     background: rgba(45, 55, 72, 0.8); /* A bit darker than main glass */
-     border-color: rgba(255, 255, 255, 0.1);
-}
-.modal .form-input:focus {
-    border-color: rgba(167, 139, 250, 0.8);
-    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3);
-}
-.modal select.form-input {
-     background-image: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23D1D5DB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="6 9 12 15 18 9"%3E%3C/polyline%3E%3C/svg%3E'); /* Light gray arrow */
-}
-.modal select.form-input option:disabled {
-     color: #6b7280; /* gray-500 */
-     opacity: 0.6;
-}
-
+/* Remove default body margin/padding if necessary */
+/* html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow-x: hidden;
+} */
+/* Ensure root element takes up full height */
+/* #app {
+    height: 100%;
+    width: 100%;
+} */
 </style>
