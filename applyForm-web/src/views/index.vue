@@ -1118,7 +1118,7 @@ onUnmounted(() => {
                         <div class="color-red-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
-                             <img :src="getIconPath('color', 'red')" class="w-10 h-10 text-white" :alt="getColorText('red') + '图标'">
+                             <img :src="getIconPath('color', 'red')" class="w-12 h-12 text-white" :alt="getColorText('red') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('red') }}</p>
@@ -1129,7 +1129,7 @@ onUnmounted(() => {
                         <div class="color-green-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
-                             <img :src="getIconPath('color', 'green')" class="w-10 h-10 text-white" :alt="getColorText('green') + '图标'">
+                             <img :src="getIconPath('color', 'green')" class="w-12 h-12 text-white" :alt="getColorText('green') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('green') }}</p>
@@ -1140,7 +1140,7 @@ onUnmounted(() => {
                         <div class="color-blue-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 颜色图标 -->
-                             <img :src="getIconPath('color', 'blue')" class="w-10 h-10 text-white" :alt="getColorText('blue') + '图标'">
+                             <img :src="getIconPath('color', 'blue')" class="w-12 h-12 text-white" :alt="getColorText('blue') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('blue') }}</p>
@@ -1181,7 +1181,7 @@ onUnmounted(() => {
                                     <span class="flex items-center">
                                          <!-- ***************************************************** -->
                                          <!-- 替换这里的 Lucide 职业图标 -->
-                                        <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                        <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
                                          <!-- ***************************************************** -->
                                         {{ getJobText(member.job) }}
                                     </span>
@@ -1226,7 +1226,7 @@ onUnmounted(() => {
                             <div :class="`color-${state.selectedColor}-bg`" class="rounded-full w-5 h-5 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm">
                                 <!-- ***************************************************** -->
                                 <!-- 替换这里的 Lucide 颜色图标 -->
-                                <img :src="getIconPath('color', state.selectedColor)" class="w-3 h-3 text-white" :alt="getColorText(state.selectedColor) + '图标'">
+                                <img :src="getIconPath('color', state.selectedColor)" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor) + '图标'">
                                 <!-- ***************************************************** -->
                             </div>
                             <span class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</span>
@@ -1242,7 +1242,7 @@ onUnmounted(() => {
                          <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 职业图标 -->
-                             <img :src="getIconPath('job', 'attacker')" class="w-10 h-10 text-white" :alt="getJobText('attacker') + '图标'">
+                             <img :src="getIconPath('job', 'attacker')" class="w-12 h-12 text-white" :alt="getJobText('attacker') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('attacker') }}</p>
@@ -1253,7 +1253,7 @@ onUnmounted(() => {
                          <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                              <!-- ***************************************************** -->
                              <!-- 替换这里的 Lucide 职业图标 -->
-                             <img :src="getIconPath('job', 'defender')" class="w-10 h-10 text-white" :alt="getJobText('defender') + '图标'">
+                             <img :src="getIconPath('job', 'defender')" class="w-12 h-12 text-white" :alt="getJobText('defender') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('defender') }}</p>
@@ -1264,7 +1264,7 @@ onUnmounted(() => {
                         <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                             <!-- ***************************************************** -->
                             <!-- 替换这里的 Lucide 职业图标 -->
-                            <img :src="getIconPath('job', 'supporter')" class="w-10 h-10 text-white" :alt="getJobText('supporter') + '图标'">
+                            <img :src="getIconPath('job', 'supporter')" class="w-12 h-12 text-white" :alt="getJobText('supporter') + '图标'">
                              <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('supporter') }}</p>
@@ -1350,7 +1350,7 @@ onUnmounted(() => {
                             <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex-shrink-0">
                                 <!-- ***************************************************** -->
                                 <!-- 替换这里的 Lucide 颜色图标 -->
-                                 <img :src="getIconPath('color', state.selectedColor)" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor) + '图标'">
+                                 <img :src="getIconPath('color', state.selectedColor)" class="w-5 h-5 text-white" :alt="getColorText(state.selectedColor) + '图标'">
                                  <!-- ***************************************************** -->
                              </div>
                              <p class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</p>
@@ -1360,7 +1360,7 @@ onUnmounted(() => {
                             <div :class="`job-${state.selectedJob}-bg`" class="rounded-full p-2 mb-1 shadow-md job-summary-shadow flex-shrink-0">
                                 <!-- ***************************************************** -->
                                 <!-- 替换这里的 Lucide 职业图标 -->
-                                <img :src="getIconPath('job', state.selectedJob)" class="w-4 h-4 text-white" :alt="getJobText(state.selectedJob) + '图标'">
+                                <img :src="getIconPath('job', state.selectedJob)" class="w-5 h-5 text-white" :alt="getJobText(state.selectedJob) + '图标'">
                                 <!-- ***************************************************** -->
                             </div>
                              <p class="text-xs font-medium text-gray-200">{{ getJobText(state.selectedJob) || '职业' }}</p>
