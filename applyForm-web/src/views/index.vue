@@ -256,14 +256,14 @@ function getColorText(colorId) {
 function getIconPath(type, value) {
     const paths = {
         color: {
-            red: '../assets/fire.svg',
-            green: '../assets/wood.svg',
-            blue: '../assets/water.svg'
+            red: '/fire.svg',
+            green: '/wood.svg',
+            blue: '/water.svg'
         },
         job: {
-            attacker: '../assets/attacker.svg',
-            defender: '../assets/defender.svg',
-            supporter: '../assets/supporter.svg'
+            attacker: '/attacker.svg',
+            defender: '/defender.svg',
+            supporter: '/supporter.svg'
         }
     };
     return paths[type]?.[value] || ''; // 如果找不到路径，返回空字符串，避免无效 src
