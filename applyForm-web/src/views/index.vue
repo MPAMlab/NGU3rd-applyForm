@@ -1036,7 +1036,7 @@ onUnmounted(() => {
     <!-- Find this div and modify its padding -->
     
         <!-- Main Content Container, centered with max-width -->
-        <div class="w-full max-w-md mx-auto px-4 py-8 sm:px-6 lg:px-8 relative z-10"> <!-- Content should be above confetti -->
+        <div class="w-full max-w-md mx-auto pt-32 py-8 sm:px-6 lg:px-8 relative z-10"> <!-- Content should be above confetti -->
             
             <!-- Progress Bar (Visible in steps 2-4) -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
@@ -2018,6 +2018,19 @@ onUnmounted(() => {
     border: 1px solid rgba(167, 139, 250, 0.7); /* Purple border on focus */
     box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3); /* Purple glow on focus */
     outline: none; /* Remove default outline */
+}
+.title-banner-img {
+    display: block;
+    height: 12rem; /* Adjust this height as needed */
+    width: auto;
+    max-width: none;
+    min-width: 100%;
+    /* The parent flex justify-center handles horizontal centering */
+}
+@media (max-width: 640px) {
+    .title-banner-img {
+        height: 8rem; /* Smaller height on mobile */
+    }
 }
 /* Style checkbox */
 input[type="checkbox"] {
