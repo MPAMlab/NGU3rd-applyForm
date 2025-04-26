@@ -248,7 +248,7 @@ export default {
 
                 // Team exists, get its members
                 const membersResult = await env.DB.prepare(
-                    'SELECT color, job, nickname, avatar_url FROM members WHERE team_code = ?' // Include avatar_url
+                    'SELECT maimai_id, color, job, nickname, avatar_url FROM members WHERE team_code = ?' // Include avatar_url
                  ).bind(code).all();
 
                 return apiResponse({

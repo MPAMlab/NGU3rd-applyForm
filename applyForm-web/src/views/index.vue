@@ -1020,10 +1020,23 @@ onUnmounted(() => {
     <!-- Root container using flexbox for centering -->
     <!-- Added more responsive padding and ensured full height -->
     <!-- Removed overflow-hidden from root to allow modal scroll if needed, added to confetti container -->
-    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
+    
+    <div class="bg-gray-900 text-white min-h-screen relative overflow-x-hidden">
+         <!-- Title Image Container (Absolute positioned at top, full width, hide overflow) -->
+    <!-- flex justify-center centers the img element horizontally within this div -->
+    <!-- z-index 0 places it behind main content (z-10) -->
+    <div class="absolute top-0 left-0 w-full overflow-hidden flex justify-center z-0">
+         <!-- Add your image tag here -->
+         <!-- Use a class like 'title-banner-img' for specific styling -->
+         <img src="/title.png" alt="NGU Tournament Title Banner" class="title-banner-img">
+         <!-- Change src="/path/to/your/title-image.jpg" to the actual path of your image -->
+    </div>
 
+    <!-- Main Content Area (Needs top padding to push content below the absolute banner) -->
+    <!-- Find this div and modify its padding -->
+    
         <!-- Main Content Container, centered with max-width -->
-        <div class="w-full max-w-md mx-auto relative z-10"> <!-- Content should be above confetti -->
+        <div class="w-full max-w-md mx-auto px-4 py-8 sm:px-6 lg:px-8 relative z-10"> <!-- Content should be above confetti -->
             
             <!-- Progress Bar (Visible in steps 2-4) -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
@@ -1823,7 +1836,7 @@ onUnmounted(() => {
                 <transition name="fade-in-up">
                 <div v-if="state.errorMessage && state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
                     <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
-                    <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
+                    <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                     <span class="break-words flex-grow">{{ state.errorMessage }}</span>
                  </div>
                 </transition>
