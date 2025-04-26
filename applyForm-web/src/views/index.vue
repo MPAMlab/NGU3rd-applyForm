@@ -1,39 +1,40 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import QrcodeVue from 'qrcode.vue'; // Import QR Code component
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import QrcodeVue from 'qrcode.vue'; // 引入 QR Code 组件
 
 // --- Configuration ---
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api'; // Default for local testing
-// Use environment variable for website link, with a fallback for local dev
-const websiteLink = computed(() => import.meta.env.VITE_WEBSITE_LINK || window.location.origin);
+// 从环境变量获取 API 基础 URL，提供本地测试的默认值
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
+// 从环境变量获取网站链接，提供一个默认值
+const websiteLink = ref(import.meta.env.VITE_WEBSITE_LINK || 'http://localhost:5173'); // 使用环境变量
 
 // --- State Management (Reactive) ---
 const state = reactive({
     currentStep: 1,
     teamCode: null,
     teamName: null,
-    isNewTeam: false,
-    newTeamName: null,
-    selectedColor: null,
-    selectedJob: null,
+    isNewTeam: false, // True if creating a new team
+    newTeamName: null, // Input for new team name
+    selectedColor: null, // 'red', 'green', or 'blue'
+    selectedJob: null, // 'attacker', 'defender', or 'supporter' (Storing just the type now)
     maimaiId: null,
     nickname: null,
     qqNumber: null,
     privacyAgreed: false,
-    avatarFile: null, // For storing the selected avatar file object
-    avatarPreview: null, // For displaying avatar preview (Data URL)
+    avatarFile: null, // 新增：存储头像文件对象
+    avatarPreviewUrl: null, // 新增：存储头像预览 URL
 
     // UI State
     showConfirmModal: false,
     showCreateModal: false,
     showLoadingOverlay: false,
-    errorMessage: null,
+    errorMessage: null, // To display API errors
 
     // Data fetched from API
-    currentTeamMembers: [],
-    completionAllMembers: [],
+    currentTeamMembers: [], // Members of the team the user is joining/creating
+    completionAllMembers: [], // All members including the newly added one for the final step
 
-    confettiInterval: null,
+    confettiInterval: null, // To store interval ID for cleanup
 });
 
 // --- Computed Properties ---
@@ -42,46 +43,49 @@ const progressWidth = computed(() => {
     return `${stepProgress[state.currentStep]}%`;
 });
 
+// 检查颜色是否已被队伍成员占用
 const isColorDisabled = computed(() => (color) => {
     return state.currentTeamMembers.some(member => member.color === color);
 });
 
+// 检查职业是否已被队伍成员占用
 const isJobDisabled = computed(() => (jobType) => {
     return state.currentTeamMembers.some(member => member.job === jobType);
 });
 
-// Computed property for the shareable URL
-const shareUrl = computed(() => {
-    return state.teamCode ? `${websiteLink.value}/?code=${state.teamCode}` : websiteLink.value;
+// 计算分享链接 URL
+const shareLinkUrl = computed(() => {
+    if (!state.teamCode) return '';
+    // 确保 websiteLink.value 末尾没有斜杠，并且总是添加 /?code=
+    const baseUrl = websiteLink.value.endsWith('/') ? websiteLink.value.slice(0, -1) : websiteLink.value;
+    return `${baseUrl}/?code=${state.teamCode}`;
 });
 
 // --- Methods / Functions ---
 
+// 导航到指定步骤
 function showStep(stepNumber) {
+    // 离开完成步骤时清理 confetti 动画
     if (state.currentStep === 5 && state.confettiInterval) {
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
         const celebrationDiv = document.getElementById('celebration');
-        if(celebrationDiv) celebrationDiv.innerHTML = '';
-    }
-    if (stepNumber === 4) {
-        // Reset avatar state if going back to step 4 or from previous steps
-        // (Or adjust logic if you want avatar preserved when going back and forth)
-        // state.avatarFile = null;
-        // state.avatarPreview = null;
+        if(celebrationDiv) celebrationDiv.innerHTML = ''; // 清理 DOM
     }
 
     state.currentStep = stepNumber;
-    state.errorMessage = null;
+    state.errorMessage = null; // 切换步骤时清除错误信息
 
+    // 进入完成步骤时触发 confetti 动画
     if (stepNumber === 5) {
          setTimeout(() => {
              createConfetti();
              state.confettiInterval = setInterval(createConfetti, 2000);
-         }, 100);
+         }, 100); // 稍作延迟
     }
 }
 
+// 处理输入组队码后的“继续”操作
 async function handleContinue() {
     const code = state.teamCode ? state.teamCode.trim() : '';
     state.errorMessage = null;
@@ -94,22 +98,38 @@ async function handleContinue() {
     state.showLoadingOverlay = true;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/teams/check`, { /* ... same as before ... */ });
-        // ... rest of handleContinue logic remains the same ...
+        const response = await fetch(`${API_BASE_URL}/teams/check`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            mode: 'cors', // 确保允许跨域请求
+            body: JSON.stringify({ code }),
+        });
+
         if (!response.ok) {
             console.error('API error:', response.status, response.statusText);
-            const errorData = await response.json().catch(() => ({})); // Try to parse error
-            state.errorMessage = errorData.error || `检查队伍时出错 (${response.status})`;
-            throw new Error(`HTTP error! Status: ${response.status}`);
+            // 尝试解析错误信息
+            let errorData;
+            try {
+                errorData = await response.json();
+            } catch (jsonError) {
+                // 如果响应体不是有效的 JSON
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+             throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
         }
+
         const data = await response.json();
 
         if (data.exists) {
+            // 队伍存在
             state.teamName = data.name;
             state.currentTeamMembers = data.members || [];
             state.isNewTeam = false;
             state.showConfirmModal = true;
         } else {
+            // 队伍不存在
             state.teamName = null;
             state.currentTeamMembers = [];
             state.isNewTeam = true;
@@ -118,19 +138,22 @@ async function handleContinue() {
 
     } catch (e) {
         console.error('API Error checking team:', e);
-         if (!state.errorMessage) { // Avoid overwriting specific API errors
-             state.errorMessage = '连接服务器失败，请稍后再试。';
-         }
+        state.errorMessage = e.message || '连接服务器失败，请稍后再试。'; // 显示更具体的错误
+        state.showLoadingOverlay = false; // 出错时也要关闭 loading
     } finally {
-        state.showLoadingOverlay = false;
+       // 仅在成功时才关闭 loading，或者在上面 catch 中处理
+       if (!state.errorMessage) state.showLoadingOverlay = false;
     }
 }
 
+// 确认加入现有队伍
 function confirmJoinTeam() {
     state.showConfirmModal = false;
+    state.showLoadingOverlay = false; // 关闭可能残留的 loading
     showStep(2);
 }
 
+// 创建新队伍
 async function createNewTeam() {
     const code = state.teamCode ? state.teamCode.trim() : '';
     const name = state.newTeamName ? state.newTeamName.trim() : '';
@@ -140,21 +163,31 @@ async function createNewTeam() {
         state.errorMessage = '请输入队伍名称';
         return;
     }
+     if (!code || code.length !== 4 || isNaN(parseInt(code))) {
+         state.errorMessage = '无效的组队码'; // 防御性检查
+         return;
+     }
 
     state.showLoadingOverlay = true;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/teams/create`, { /* ... same as before ... */ });
-        // ... rest of createNewTeam logic remains the same ...
+        const response = await fetch(`${API_BASE_URL}/teams/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            mode: 'cors',
+            body: JSON.stringify({ code, name }),
+        });
+
         const data = await response.json();
 
         if (!response.ok) {
-             state.errorMessage = data.error || '创建队伍失败';
+             state.errorMessage = data.error || `创建队伍失败 (HTTP ${response.status})`;
              return;
         }
 
+        // 创建成功
         state.teamName = data.name;
-        state.currentTeamMembers = [];
+        state.currentTeamMembers = []; // 新队伍初始无成员
         state.showCreateModal = false;
         showStep(2);
 
@@ -166,30 +199,26 @@ async function createNewTeam() {
     }
 }
 
+// 选择颜色
 function selectColor(color) {
     if (!isColorDisabled.value(color)) {
         state.selectedColor = color;
     }
 }
 
+// 获取颜色显示文本
 function getColorText(colorId) {
-     switch(colorId) {
-         case 'red': return '红色';
-         case 'green': return '绿色';
-         case 'blue': return '蓝色';
-         default: return '';
-     }
+     const map = { red: '红色', green: '绿色', blue: '蓝色' };
+     return map[colorId] || '';
 }
 
+// 获取颜色对应的 Lucide 图标名称
 function getColorIcon(colorId) {
-     switch(colorId) {
-         case 'red': return 'flame';
-         case 'green': return 'leaf';
-         case 'blue': return 'droplets';
-         default: return 'help-circle';
-     }
+    const map = { red: 'flame', green: 'leaf', blue: 'droplets' };
+    return map[colorId] || 'help-circle';
 }
 
+// 选择职业
 function selectJob(jobId) {
      const jobType = jobId.replace('job-', '');
     if (!isJobDisabled.value(jobType)) {
@@ -197,73 +226,53 @@ function selectJob(jobId) {
     }
 }
 
+// 获取职业显示文本
 function getJobText(jobType) {
-     switch(jobType) {
-         case 'attacker': return '攻击手';
-         case 'defender': return '防御手';
-         case 'supporter': return '辅助手';
-         default: return '';
-     }
+    const map = { attacker: '攻击手', defender: '防御手', supporter: '辅助手' };
+    return map[jobType] || '';
 }
 
+// 获取职业对应的 Lucide 图标名称
 function getJobIcon(jobType) {
-     switch(jobType) {
-         case 'attacker': return 'swords';
-         case 'defender': return 'shield';
-         case 'supporter': return 'heart-pulse';
-         default: return 'help-circle';
-     }
+    const map = { attacker: 'swords', defender: 'shield', supporter: 'heart-pulse' };
+    return map[jobType] || 'help-circle';
 }
 
-// --- Avatar Handling ---
-function triggerAvatarUpload() {
-    document.getElementById('avatar-upload-input')?.click();
-}
-
+// 新增：处理头像文件选择
 function handleAvatarChange(event) {
-    const file = event.target.files?.[0];
+    const file = event.target.files[0];
     if (!file) {
         state.avatarFile = null;
-        state.avatarPreview = null;
+        if (state.avatarPreviewUrl) {
+            URL.revokeObjectURL(state.avatarPreviewUrl); // 清理旧预览
+        }
+        state.avatarPreviewUrl = null;
         return;
     }
 
-    // Optional: Basic validation (e.g., type, size)
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-        state.errorMessage = '请上传图片文件 (JPG, PNG, GIF, WebP)';
-        state.avatarFile = null;
-        state.avatarPreview = null;
-        // Clear the input value so the same file can be selected again if needed after error
-        event.target.value = null;
+    // 可选：添加文件类型和大小检查
+    if (!file.type.startsWith('image/')) {
+        state.errorMessage = '请选择图片文件 (如 JPG, PNG, GIF)';
+        event.target.value = ''; // 清空选择
         return;
     }
-    const maxSizeInMB = 2; // Example: 2MB limit
-    if (file.size > maxSizeInMB * 1024 * 1024) {
-         state.errorMessage = `文件大小不能超过 ${maxSizeInMB}MB`;
-         state.avatarFile = null;
-         state.avatarPreview = null;
-         event.target.value = null;
-         return;
+    if (file.size > 2 * 1024 * 1024) { // 限制 2MB
+        state.errorMessage = '图片大小不能超过 2MB';
+         event.target.value = ''; // 清空选择
+        return;
     }
 
     state.avatarFile = file;
-    state.errorMessage = null; // Clear previous errors
 
-    // Create preview
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        state.avatarPreview = e.target?.result;
-    };
-    reader.onerror = (e) => {
-        console.error("FileReader error:", e);
-        state.errorMessage = "无法预览图片";
-        state.avatarPreview = null;
+    // 生成预览 URL
+    if (state.avatarPreviewUrl) {
+        URL.revokeObjectURL(state.avatarPreviewUrl); // 清理之前的预览 URL
     }
-    reader.readAsDataURL(file);
+    state.avatarPreviewUrl = URL.createObjectURL(file);
+    state.errorMessage = null; // 清除可能的文件错误信息
 }
 
-// --- Form Submission with Avatar ---
+// 提交个人信息
 async function handleSubmitPersonalInfo() {
     state.errorMessage = null;
 
@@ -271,47 +280,49 @@ async function handleSubmitPersonalInfo() {
         state.errorMessage = '请填写所有必填字段并同意隐私政策';
         return;
     }
-     if (!state.selectedColor || !state.selectedJob) {
-         state.errorMessage = '请选择颜色和职业';
+    if (!state.selectedColor || !state.selectedJob) {
+         state.errorMessage = '内部错误：未选择颜色或职业';
          return;
      }
-     // Optional: Check if avatar is uploaded, though it might not be mandatory
-     // if (!state.avatarFile) {
-     //     state.errorMessage = '请上传头像';
-     //     return;
-     // }
+     // 注意：这里的 avatarFile 还没有被发送到后端
+     // 如果需要发送头像，你需要修改这里的 fetch 请求：
+     // 1. 创建一个 FormData 对象
+     // 2. 将所有字段（包括 state.avatarFile）添加到 FormData 中
+     // 3. 修改 fetch 的 headers，移除 'Content-Type': 'application/json'
+     // 4. 将 FormData 对象作为 body 发送
+     // 5. 后端需要能处理 multipart/form-data 请求
 
     state.showLoadingOverlay = true;
 
-    // --- Use FormData for file upload ---
-    const formData = new FormData();
-    formData.append('teamCode', state.teamCode);
-    formData.append('color', state.selectedColor);
-    formData.append('job', state.selectedJob);
-    formData.append('maimaiId', state.maimaiId.trim());
-    formData.append('nickname', state.nickname.trim());
-    formData.append('qqNumber', state.qqNumber.trim());
-    if (state.avatarFile) {
-        formData.append('avatar', state.avatarFile, state.avatarFile.name); // Key 'avatar', value is the file
-    }
-
     try {
-        // IMPORTANT: Backend must handle multipart/form-data
+        // 当前实现不发送头像文件
         const response = await fetch(`${API_BASE_URL}/teams/join`, {
             method: 'POST',
-             // No 'Content-Type' header needed - browser sets it for FormData
-            body: formData, // Send FormData object
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            mode: 'cors',
+            body: JSON.stringify({
+                teamCode: state.teamCode,
+                color: state.selectedColor,
+                job: state.selectedJob,
+                maimaiId: state.maimaiId.trim(),
+                nickname: state.nickname.trim(),
+                qqNumber: state.qqNumber.trim(),
+                // avatar: 如果要发送头像，这里可能需要发送一个标识或 URL (取决于后端实现)
+            }),
         });
 
         const data = await response.json();
 
         if (!response.ok) {
-             state.errorMessage = data.error || '提交信息失败';
+             state.errorMessage = data.error || `提交信息失败 (HTTP ${response.status})`;
              return;
         }
 
+        // 成功加入
         state.completionAllMembers = data.members || [];
-        state.teamName = data.name; // Update team name from response
+        state.teamName = data.name; // 确保 teamName 也从成功响应中更新
         showStep(5);
 
     } catch (e) {
@@ -322,106 +333,160 @@ async function handleSubmitPersonalInfo() {
     }
 }
 
-// --- Other Functions (copyShareLink, goHome, createConfetti) ---
+// 复制分享链接
 function copyShareLink() {
-    const shareLinkInput = document.getElementById('shareLink');
-    if (shareLinkInput) {
-        // Use the computed shareUrl for copying
-        const textToCopy = shareUrl.value;
-        navigator.clipboard.writeText(textToCopy).then(() => {
+    const urlToCopy = shareLinkUrl.value; // 使用计算属性获取链接
+    if (!urlToCopy) return;
+
+    navigator.clipboard.writeText(urlToCopy).then(() => {
+        const copyBtn = document.getElementById('copyBtn');
+        if (copyBtn) {
+            const originalIconHTML = copyBtn.innerHTML;
+            copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
+            copyBtn.disabled = true; // 暂时禁用按钮
+            setTimeout(() => {
+                copyBtn.innerHTML = originalIconHTML;
+                copyBtn.disabled = false;
+            }, 2000);
+        }
+    }).catch(err => {
+        console.error('无法使用 Clipboard API 复制: ', err);
+        // 备选方法 (可能在非 https 环境或旧浏览器中需要)
+        try {
+            const inputElement = document.createElement('textarea');
+            inputElement.value = urlToCopy;
+            inputElement.style.position = 'absolute';
+            inputElement.style.left = '-9999px';
+            document.body.appendChild(inputElement);
+            inputElement.select();
+            document.execCommand('copy');
+            document.body.removeChild(inputElement);
+
+            // 提供反馈 (同上)
             const copyBtn = document.getElementById('copyBtn');
-            if (copyBtn) {
-                const originalIcon = copyBtn.innerHTML;
-                copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
+             if (copyBtn) {
+                const originalIconHTML = copyBtn.innerHTML;
+                copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="已复制">';
+                 copyBtn.disabled = true;
                 setTimeout(() => {
-                    copyBtn.innerHTML = originalIcon;
+                    copyBtn.innerHTML = originalIconHTML;
+                    copyBtn.disabled = false;
                 }, 2000);
-            }
-        }).catch(err => {
-            console.error('Failed to copy text using clipboard API: ', err);
-            // Fallback attempt (less reliable)
-            try {
-                shareLinkInput.select(); // Select the input content for execCommand
-                shareLinkInput.setSelectionRange(0, 99999);
-                document.execCommand('copy');
-                const copyBtn = document.getElementById('copyBtn');
-                if (copyBtn) {
-                   const originalIcon = copyBtn.innerHTML;
-                   copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
-                   setTimeout(() => {
-                       copyBtn.innerHTML = originalIcon;
-                   }, 2000);
-                }
-            } catch (execErr) {
-               console.error('Failed to copy text using execCommand: ', execErr);
-               alert('复制失败，请手动复制链接。');
-            }
-        });
-    }
+             }
+        } catch (execErr) {
+            console.error('无法使用 execCommand 复制: ', execErr);
+            alert('复制失败，请手动复制链接。');
+        }
+    });
 }
 
+// 返回首页并重置状态
 function goHome() {
-    // Reset all relevant state variables, including avatar state
-    state.teamCode = null;
-    state.teamName = null;
-    state.isNewTeam = false;
-    state.newTeamName = null;
-    state.selectedColor = null;
-    state.selectedJob = null;
-    state.maimaiId = null;
-    state.nickname = null;
-    state.qqNumber = null;
-    state.privacyAgreed = false;
-    state.avatarFile = null; // Reset avatar
-    state.avatarPreview = null; // Reset preview
-    state.showConfirmModal = false;
-    state.showCreateModal = false;
-    state.showLoadingOverlay = false;
-    state.errorMessage = null;
-    state.currentTeamMembers = [];
-    state.completionAllMembers = [];
+    // 清理头像预览 URL
+    if (state.avatarPreviewUrl) {
+        URL.revokeObjectURL(state.avatarPreviewUrl);
+    }
 
-    history.replaceState({}, document.title, window.location.pathname);
+    // 重置状态
+    Object.assign(state, {
+        currentStep: 1,
+        teamCode: null,
+        teamName: null,
+        isNewTeam: false,
+        newTeamName: null,
+        selectedColor: null,
+        selectedJob: null,
+        maimaiId: null,
+        nickname: null,
+        qqNumber: null,
+        privacyAgreed: false,
+        avatarFile: null,
+        avatarPreviewUrl: null,
+        showConfirmModal: false,
+        showCreateModal: false,
+        showLoadingOverlay: false,
+        errorMessage: null,
+        currentTeamMembers: [],
+        completionAllMembers: [],
+        confettiInterval: null, // 确保 confetti 定时器也被清理
+    });
+
+    // 清理 URL 参数
+    history.replaceState(null, '', window.location.pathname);
+
     showStep(1);
 }
 
-// Confetti function remains the same
-function createConfetti() { /* ... same as before ... */ }
+// Confetti 动画 (保持不变)
+function createConfetti() {
+    const celebrationDiv = document.getElementById('celebration');
+    if (!celebrationDiv) return;
+    const confettiCount = 20;
+    const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d'];
+    for (let i = 0; i < confettiCount; i++) {
+        const confetti = document.createElement('div');
+        confetti.classList.add('confetti');
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+        confetti.style.backgroundColor = randomColor;
+        confetti.style.left = Math.random() * 100 + 'vw';
+        confetti.style.top = -20 + 'px';
+        const size = Math.random() * 10 + 5;
+        confetti.style.width = size + 'px';
+        confetti.style.height = size + 'px';
+        const duration = Math.random() * 3 + 2;
+        confetti.style.animationDuration = duration + 's';
+        const delay = Math.random() * 2;
+        confetti.style.animationDelay = delay + 's';
+        celebrationDiv.appendChild(confetti);
+        confetti.addEventListener('animationend', () => { confetti.remove(); });
+    }
+}
+
+    // 监听 teamCode 变化，用于实时更新二维码和分享链接 (如果 teamCode 在最终页面还可能变化的话)
+    // watch(() => state.teamCode, (newCode) => {
+    //   console.log("Team code changed, share link is now:", shareLinkUrl.value);
+    // });
 
 // --- Lifecycle Hooks ---
+
 onMounted(() => {
+    // 页面加载时检查 URL 是否有组队码
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
 
     if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
         state.teamCode = codeParam;
-        handleContinue();
+        handleContinue(); // 自动触发检查
+    } else {
+       showStep(state.currentStep); // 确保显示初始步骤
     }
-    // Ensure initial render is correct if no code param
-    // showStep(state.currentStep); // showStep is called implicitly by handleContinue or default state
 });
 
 onUnmounted(() => {
+    // 清理 confetti 定时器
     if (state.confettiInterval) {
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
          const celebrationDiv = document.getElementById('celebration');
          if(celebrationDiv) celebrationDiv.innerHTML = '';
     }
+    // 清理头像预览 Object URL
+    if (state.avatarPreviewUrl) {
+        URL.revokeObjectURL(state.avatarPreviewUrl);
+    }
 });
 
 </script>
 
 <template>
-    <!-- Root container with centering and vertical scrolling -->
+    <!-- 根容器，使用 flex 居中内容 -->
     <div class="bg-gray-900 text-white min-h-screen flex items-center justify-center px-4 py-8 overflow-y-auto">
 
-        <!-- Content Container -->
-        <div class="container max-w-sm mx-auto w-full"> <!-- Or max-w-md for slightly larger on desktop -->
+        <!-- 主内容容器，限制最大宽度并水平居中 -->
+        <div class="container max-w-md mx-auto w-full"> <!-- max-w-sm on smaller screens, max-w-md on sm+ -->
 
-            <!-- Progress Bar -->
+            <!-- 进度条 (步骤 2-4 可见) -->
             <div class="mb-8" v-if="state.currentStep > 1 && state.currentStep < 5">
-                 <!-- ... progress bar unchanged ... -->
                 <div class="flex justify-between text-xs text-gray-400 mb-2">
                     <span>组队码</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 2}">颜色</span>
@@ -433,286 +498,310 @@ onUnmounted(() => {
                 </div>
             </div>
 
-            <!-- Error Message Display -->
-            <div v-if="state.errorMessage" class="bg-red-600 bg-opacity-80 text-white text-sm p-3 rounded-lg mb-6 fade-in">
-                {{ state.errorMessage }}
+             <!-- 错误消息显示区域 -->
+             <div v-if="state.errorMessage" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 fade-in shadow-lg flex items-center">
+                 <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-2 text-yellow-300" alt="Error">
+                 <span>{{ state.errorMessage }}</span>
             </div>
 
-            <!-- Step 1: Team Code Input -->
+            <!-- Step 1: 组队码输入 -->
             <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-show="state.currentStep === 1">
-                 <!-- ... step 1 unchanged ... -->
+                <!-- Header -->
                 <div class="text-center mb-8">
-                    <div class="w-24 h-24 bg-purple-600 rounded-full mx-auto flex items-center justify-center mb-4">
+                     <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
                         <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-12 h-12 text-white" alt="Team">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">舞萌队伍注册</h1>
-                    <p class="text-purple-300">输入四位数组队码开始</p>
+                    <p class="text-purple-300">输入四位数组队码加入或创建队伍</p>
                 </div>
 
+                <!-- Input Field -->
                 <div class="mb-8">
                     <label for="teamCode" class="block text-sm font-medium text-purple-300 mb-2">组队码</label>
-                    <input type="text" id="teamCode" v-model="state.teamCode" maxlength="4" placeholder="1234" class="input-code w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-4 px-6 text-2xl focus:outline-none focus:ring-2 focus:ring-purple-500">
-                    <p class="mt-2 text-xs text-gray-400">请输入四位数字的组队码</p>
+                    <input
+                        type="text"
+                        inputmode="numeric"
+                        pattern="[0-9]*"
+                        id="teamCode"
+                        v-model="state.teamCode"
+                        maxlength="4"
+                        placeholder="1234"
+                        class="input-code w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-4 px-6 text-2xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-center tracking-[0.5em]"
+                        @input="(event) => state.teamCode = event.target.value.replace(/[^0-9]/g, '')"
+                    >
+                    <p class="mt-2 text-xs text-gray-400">不存在的组队码将自动创建新队伍</p>
                 </div>
 
-                <button @click="handleContinue" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
+                <!-- Continue Button -->
+                <button @click="handleContinue" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300">
                     继续
                 </button>
-
-                <p class="text-center text-sm text-gray-400">
-                    没有组队码？系统将自动为你创建新队伍
-                </p>
             </div>
 
-            <!-- Step 2: Color Selection -->
-            <div id="step-color-selection" class="glass rounded-3xl p-8" v-show="state.currentStep === 2">
-                 <!-- ... step 2 unchanged ... -->
-                 <div class="text-center mb-8">
+            <!-- Step 2: 颜色选择 -->
+            <div id="step-color-selection" class="glass rounded-3xl p-8 fade-in" v-show="state.currentStep === 2">
+                <!-- Header -->
+                <div class="text-center mb-8">
                     <h1 class="text-3xl font-bold mb-2">选择你的颜色</h1>
-                    <p class="text-purple-300">每个队伍中的成员需要选择不同的颜色</p>
+                    <p class="text-purple-300">每个队伍中的颜色必须唯一</p>
                 </div>
-                <!-- ... Team Info, Color Options, Member List, Buttons ... -->
+
+                <!-- Team Info Box -->
                 <div class="glass rounded-xl p-4 mb-8">
-                    <div class="flex items-center">
-                        <div class="bg-purple-600 rounded-full p-2 mr-3">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
+                     <div class="flex items-center">
+                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
                             <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
+                             <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
                         </div>
                     </div>
                 </div>
 
+                <!-- Color Options Grid -->
                 <div class="grid grid-cols-3 gap-4 mb-8">
-                    <!-- Color options -->
-                   <div class="color-option" id="color-red" :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }" @click="selectColor('red')">
+                    <div role="button" tabindex="0" class="color-option"
+                         :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }"
+                         @click="selectColor('red')" @keydown.enter="selectColor('red')" @keydown.space="selectColor('red')">
                         <div class="color-red-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/flame.svg" class="w-10 h-10 text-white" alt="Red">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/flame.svg" class="w-10 h-10 text-white" alt="Red">
                         </div>
                         <p class="text-center font-medium">红色</p>
                     </div>
-                    <div class="color-option" id="color-green" :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }" @click="selectColor('green')">
+                     <div role="button" tabindex="0" class="color-option"
+                         :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }"
+                         @click="selectColor('green')" @keydown.enter="selectColor('green')" @keydown.space="selectColor('green')">
                         <div class="color-green-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/leaf.svg" class="w-10 h-10 text-white" alt="Green">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/leaf.svg" class="w-10 h-10 text-white" alt="Green">
                         </div>
                         <p class="text-center font-medium">绿色</p>
                     </div>
-                    <div class="color-option" id="color-blue" :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }" @click="selectColor('blue')">
+                     <div role="button" tabindex="0" class="color-option"
+                         :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }"
+                         @click="selectColor('blue')" @keydown.enter="selectColor('blue')" @keydown.space="selectColor('blue')">
                         <div class="color-blue-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/droplets.svg" class="w-10 h-10 text-white" alt="Blue">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/droplets.svg" class="w-10 h-10 text-white" alt="Blue">
                         </div>
                         <p class="text-center font-medium">蓝色</p>
                     </div>
                 </div>
 
+                <!-- Current Members Box -->
                 <div class="glass rounded-xl p-4 mb-8">
-                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
-                     <div class="space-y-3">
-                         <div v-for="member in state.currentTeamMembers" :key="member.nickname + member.color" class="flex items-center">
-                             <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
-                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-4 h-4 text-white" alt="Member">
-                             </div>
-                             <div>
-                                 <p class="font-medium">{{ member.nickname }}</p>
-                                 <p class="text-xs text-gray-400">
-                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }} ·
-                                     <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
-                                 </p>
-                             </div>
-                         </div>
-                          <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm">暂无其他成员</div>
-                     </div>
-                 </div>
-
-                <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                    下一步
-                </button>
-                <button @click="showStep(1)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
-                    返回
-                </button>
-
-            </div>
-
-            <!-- Step 3: Job Selection -->
-            <div id="step-job-selection" class="glass rounded-3xl p-8" v-show="state.currentStep === 3">
-                 <!-- ... step 3 unchanged ... -->
-                <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold mb-2">选择你的职业</h1>
-                    <p class="text-purple-300">每个队伍中的成员需要选择不同的职业</p>
-                </div>
-                <!-- ... Team Info, Color Info, Job Options, Member List, Buttons ... -->
-                 <div class="glass rounded-xl p-4 mb-8">
-                    <div class="flex items-center">
-                        <div class="bg-purple-600 rounded-full p-2 mr-3">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
-                        </div>
-                        <div>
-                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
-                        </div>
-                    </div>
-                </div>
-                 <div class="glass rounded-xl p-4 mb-8">
-                    <h3 class="text-sm font-medium mb-3">你的颜色</h3>
-                    <div class="flex items-center">
-                        <div :class="`color-${state.selectedColor}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
-                             <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor)">
-                        </div>
-                        <p class="font-medium">{{ getColorText(state.selectedColor) }}</p>
-                    </div>
-                </div>
-                <div class="grid grid-cols-3 gap-4 mb-8">
-                     <!-- Job options -->
-                     <div class="job-option" id="job-attacker" :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }" @click="selectJob('job-attacker')">
-                         <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/swords.svg" class="w-10 h-10 text-white" alt="Attacker">
-                         </div>
-                         <p class="text-center font-medium">攻击手</p>
-                     </div>
-                     <div class="job-option" id="job-defender" :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }" @click="selectJob('job-defender')">
-                         <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/shield.svg" class="w-10 h-10 text-white" alt="Defender">
-                         </div>
-                         <p class="text-center font-medium">防御手</p>
-                     </div>
-                     <div class="job-option" id="job-supporter" :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }" @click="selectJob('job-supporter')">
-                         <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/heart-pulse.svg" class="w-10 h-10 text-white" alt="Supporter">
-                         </div>
-                         <p class="text-center font-medium">辅助手</p>
-                     </div>
-                 </div>
-                 <div class="glass rounded-xl p-4 mb-8">
                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
                     <div class="space-y-3">
-                         <div v-for="member in state.currentTeamMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
-                             <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3">
-                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-4 h-4 text-white" alt="Member">
-                             </div>
-                             <div>
-                                 <p class="font-medium">{{ member.nickname }}</p>
-                                 <p class="text-xs text-gray-400">
-                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }} ·
-                                     <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
-                                 </p>
-                             </div>
-                         </div>
-                          <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm">暂无其他成员</div>
-                     </div>
-                 </div>
-
-                 <button @click="showStep(4)" :disabled="!state.selectedJob" :class="{'opacity-50 cursor-not-allowed': !state.selectedJob}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                    下一步
-                </button>
-                <button @click="showStep(2)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
-                    返回
-                </button>
-            </div>
-
-            <!-- Step 4: Personal Info (with Avatar Upload) -->
-            <div id="step-personal-info" class="glass rounded-3xl p-8" v-show="state.currentStep === 4">
-                <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold mb-2">个人信息</h1>
-                    <p class="text-purple-300">请填写你的个人信息完成注册</p>
-                </div>
-
-                <!-- Summary Section (Unchanged) -->
-                <div class="glass rounded-xl p-4 mb-8">
-                    <h3 class="text-sm font-medium mb-3">你的选择</h3>
-                    <div class="flex items-center justify-around space-x-4">
-                        <!-- Team Summary -->
-                        <div class="flex flex-col items-center">
-                            <div class="bg-purple-600 rounded-full p-2 mb-1">
-                                <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-4 h-4 text-white" alt="Team">
+                         <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
+                        <div v-else v-for="member in state.currentTeamMembers" :key="member.nickname + member.color" class="flex items-center">
+                             <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm">
+                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(member.color)">
                             </div>
-                            <p class="text-xs text-center">{{ state.teamName || '队伍名称' }}</p>
-                        </div>
-                        <!-- Color Summary -->
-                        <div class="flex flex-col items-center">
-                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1">
-                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor)">
+                            <div>
+                                <p class="font-medium text-sm">{{ member.nickname }}</p>
+                                <p class="text-xs text-gray-300 flex items-center">
+                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
+                                     <span class="mx-1">·</span>
+                                     <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
+                                </p>
                             </div>
-                            <p class="text-xs text-center">{{ getColorText(state.selectedColor) }}</p>
-                        </div>
-                        <!-- Job Summary -->
-                        <div class="flex flex-col items-center">
-                            <div class="bg-pink-500 rounded-full p-2 mb-1"> <!-- Consider making job bg dynamic too? -->
-                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(state.selectedJob)}.svg`" class="w-4 h-4 text-white" :alt="getJobText(state.selectedJob)">
-                            </div>
-                            <p class="text-xs text-center">{{ getJobText(state.selectedJob) }}</p>
                         </div>
                     </div>
                 </div>
 
-                <!-- Form for Personal Info -->
-                <form @submit.prevent="handleSubmitPersonalInfo" class="mb-8">
+                <!-- Navigation Buttons -->
+                 <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
+                    下一步
+                </button>
+                <button @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                    返回首页
+                </button>
+            </div>
+
+            <!-- Step 3: 职业选择 -->
+            <div id="step-job-selection" class="glass rounded-3xl p-8 fade-in" v-show="state.currentStep === 3">
+                 <!-- Header -->
+                <div class="text-center mb-8">
+                    <h1 class="text-3xl font-bold mb-2">选择你的职业</h1>
+                    <p class="text-purple-300">每个队伍中的职业也必须唯一</p>
+                </div>
+
+                <!-- Team Info Box -->
+                 <div class="glass rounded-xl p-4 mb-8">
+                     <div class="flex items-center justify-between">
+                         <div class="flex items-center">
+                             <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md">
+                                <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
+                            </div>
+                            <div>
+                                <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
+                                 <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
+                            </div>
+                         </div>
+                         <!-- Selected Color Display -->
+                         <div class="flex items-center glass rounded-full px-3 py-1">
+                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full w-5 h-5 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm">
+                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-3 h-3 text-white" :alt="getColorText(state.selectedColor)">
+                            </div>
+                            <span class="text-xs font-medium">{{ getColorText(state.selectedColor) || '颜色' }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Job Options Grid -->
+                 <div class="grid grid-cols-3 gap-4 mb-8">
+                    <div role="button" tabindex="0" class="job-option"
+                         :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
+                         @click="selectJob('job-attacker')" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
+                         <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
+                            <img src="https://unpkg.com/lucide-static@latest/icons/swords.svg" class="w-10 h-10 text-white" alt="Attacker">
+                        </div>
+                        <p class="text-center font-medium">攻击手</p>
+                    </div>
+                    <div role="button" tabindex="0" class="job-option"
+                         :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
+                         @click="selectJob('job-defender')" @keydown.enter="selectJob('job-defender')" @keydown.space="selectJob('job-defender')">
+                         <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
+                            <img src="https://unpkg.com/lucide-static@latest/icons/shield.svg" class="w-10 h-10 text-white" alt="Defender">
+                        </div>
+                        <p class="text-center font-medium">防御手</p>
+                    </div>
+                    <div role="button" tabindex="0" class="job-option"
+                         :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
+                         @click="selectJob('job-supporter')" @keydown.enter="selectJob('job-supporter')" @keydown.space="selectJob('job-supporter')">
+                        <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
+                            <img src="https://unpkg.com/lucide-static@latest/icons/heart-pulse.svg" class="w-10 h-10 text-white" alt="Supporter">
+                        </div>
+                        <p class="text-center font-medium">辅助手</p>
+                    </div>
+                </div>
+
+                <!-- Current Members Box -->
+                <div class="glass rounded-xl p-4 mb-8">
+                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
+                    <div class="space-y-3">
+                         <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
+                        <div v-else v-for="member in state.currentTeamMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
+                            <div :class="`color-${member.color}-bg`" class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm">
+                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(member.color)">
+                            </div>
+                            <div>
+                                <p class="font-medium text-sm">{{ member.nickname }}</p>
+                                <p class="text-xs text-gray-300 flex items-center">
+                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
+                                     <span class="mx-1">·</span>
+                                    <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Navigation Buttons -->
+                <button @click="showStep(4)" :disabled="!state.selectedJob" :class="{'opacity-50 cursor-not-allowed': !state.selectedJob}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
+                    下一步
+                </button>
+                <button @click="showStep(2)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                    返回
+                </button>
+            </div>
+
+            <!-- Step 4: 个人信息 -->
+            <div id="step-personal-info" class="glass rounded-3xl p-8 fade-in" v-show="state.currentStep === 4">
+                 <!-- Header -->
+                 <div class="text-center mb-8">
+                    <h1 class="text-3xl font-bold mb-2">填写个人信息</h1>
+                    <p class="text-purple-300">完成最后一步即可加入队伍</p>
+                </div>
+
+                <!-- Summary Box -->
+                <div class="glass rounded-xl p-4 mb-8">
+                    <h3 class="text-sm font-medium mb-3 text-center text-purple-300">你的选择</h3>
+                    <div class="flex items-center justify-around">
+                         <!-- Team -->
+                        <div class="text-center flex flex-col items-center">
+                             <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mb-1 shadow-md">
+                                <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-4 h-4 text-white" alt="Team">
+                            </div>
+                            <p class="text-xs font-medium">{{ state.teamName || '队伍' }}</p>
+                             <p class="text-xs text-gray-400">{{ state.teamCode || '代码' }}</p>
+                        </div>
+                         <!-- Color -->
+                         <div class="text-center flex flex-col items-center">
+                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md">
+                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor)">
+                             </div>
+                             <p class="text-xs font-medium">{{ getColorText(state.selectedColor) || '颜色' }}</p>
+                        </div>
+                         <!-- Job -->
+                         <div class="text-center flex flex-col items-center">
+                            <div :class="`job-${state.selectedJob}-bg`" class="rounded-full p-2 mb-1 shadow-md job-summary-shadow">
+                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(state.selectedJob)}.svg`" class="w-4 h-4 text-white" :alt="getJobText(state.selectedJob)">
+                            </div>
+                             <p class="text-xs font-medium">{{ getJobText(state.selectedJob) || '职业' }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Form -->
+                 <form @submit.prevent="handleSubmitPersonalInfo">
 
                     <!-- Avatar Upload Section -->
                     <div class="mb-6 text-center">
                         <label class="block text-sm font-medium text-purple-300 mb-3">上传头像 (可选)</label>
-                        <div class="flex flex-col items-center">
-                            <!-- Hidden file input -->
-                            <input type="file" id="avatar-upload-input" accept="image/png, image/jpeg, image/gif, image/webp" @change="handleAvatarChange" class="hidden">
-
-                            <!-- Avatar Preview / Placeholder -->
-                             <div class="w-24 h-24 rounded-full bg-gray-700 mb-3 flex items-center justify-center overflow-hidden border-2 border-gray-600">
-                                <img v-if="state.avatarPreview" :src="state.avatarPreview" alt="Avatar Preview" class="w-full h-full object-cover">
-                                <img v-else src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-12 h-12 text-gray-400" alt="Avatar Placeholder">
-                             </div>
-
-                            <!-- Upload Button -->
-                            <button type="button" @click="triggerAvatarUpload" class="text-sm bg-gray-700 hover:bg-gray-600 rounded-lg px-4 py-2 transition duration-300">
-                                选择图片
-                            </button>
-
-                            <p class="mt-2 text-xs text-gray-400">支持 JPG, PNG, GIF, WebP (最大 2MB)</p>
+                        <div class="flex flex-col items-center space-y-3">
+                            <!-- Preview Image -->
+                            <img v-if="state.avatarPreviewUrl" :src="state.avatarPreviewUrl" alt="头像预览" class="w-24 h-24 rounded-full object-cover border-2 border-purple-500 shadow-md">
+                            <div v-else class="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600">
+                                <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-10 h-10 text-gray-400" alt="Default Avatar">
+                            </div>
+                             <!-- File Input Button -->
+                            <label for="avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300">
+                                {{ state.avatarFile ? '更换头像' : '选择图片' }}
+                            </label>
+                            <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/*" class="hidden">
+                            <p class="text-xs text-gray-400">支持 JPG, PNG, GIF, 最大 2MB</p>
                         </div>
                     </div>
 
-                    <!-- Maimai ID -->
+                    <!-- Other Fields -->
                     <div class="mb-4">
-                        <label for="maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID*</label>
-                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
-                        <p class="mt-1 text-xs text-gray-400">请输入你的舞萌游戏ID</p>
+                        <label for="maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID <span class="text-red-500">*</span></label>
+                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：1234567890123" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
                     </div>
 
-                    <!-- Nickname -->
                     <div class="mb-4">
-                        <label for="nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼*</label>
+                        <label for="nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼 <span class="text-red-500">*</span></label>
                         <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：小明" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
-                        <p class="mt-1 text-xs text-gray-400">请输入你希望被称呼的名字</p>
                     </div>
 
-                    <!-- QQ Number -->
-                    <div class="mb-4">
-                        <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号*</label>
-                        <input type="text" id="qq-number" v-model="state.qqNumber" required placeholder="例如：123456789" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
-                        <p class="mt-1 text-xs text-gray-400">用于队伍联系</p>
+                    <div class="mb-6">
+                        <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
+                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="方便队长联系" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
                     </div>
 
                     <!-- Privacy Agreement -->
-                    <div class="mb-6">
-                        <label class="flex items-start">
-                            <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2">
-                            <span class="text-xs text-gray-300">我已阅读并同意<a href="#" class="text-purple-400 hover:underline">隐私政策*</a>，并允许收集和使用我的信息用于组队目的。</span>
+                     <div class="mb-6">
+                        <label class="flex items-start cursor-pointer">
+                            <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-500 rounded bg-gray-700">
+                             <span class="text-xs text-gray-300 select-none">我已阅读并同意<a href="#" @click.prevent class="text-purple-400 hover:underline font-medium">隐私政策</a>，允许收集和使用我的QQ号用于组队联系目的。<span class="text-red-500">*</span></span>
                         </label>
                     </div>
 
-                    <!-- Buttons -->
-                    <button type="submit" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                        提交信息并加入队伍
+                    <!-- Action Buttons -->
+                    <button type="submit" :disabled="!state.privacyAgreed" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :class="{'opacity-50 cursor-not-allowed': !state.privacyAgreed}">
+                        完成注册
                     </button>
-                    <button type="button" @click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
+
+                    <button type="button" @click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                         返回
                     </button>
                 </form>
             </div>
 
-            <!-- Step 5: Completion Page (with QR Code) -->
-            <div id="step-completion" class="glass rounded-3xl p-8" v-show="state.currentStep === 5">
+            <!-- Step 5: 完成页面 -->
+            <div id="step-completion" class="glass rounded-3xl p-8 fade-in" v-show="state.currentStep === 5">
                  <!-- Progress Bar (Completed) -->
-                 <div class="mb-8">
+                <div class="mb-8">
                     <div class="flex justify-between text-xs text-gray-400 mb-2">
                         <span>组队码</span>
                         <span>颜色</span>
@@ -722,297 +811,451 @@ onUnmounted(() => {
                     <div class="progress-bar"><div class="progress-fill" style="width: 100%;"></div></div>
                 </div>
 
-                 <!-- Header -->
+                <!-- Success Message -->
                 <div class="text-center mb-8">
-                    <div class="w-24 h-24 bg-purple-600 rounded-full mx-auto flex items-center justify-center mb-4">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-12 h-12 text-white" alt="Success">
+                     <div class="w-24 h-24 bg-gradient-to-br from-green-500 to-teal-500 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
+                        <img src="https://unpkg.com/lucide-static@latest/icons/check-circle.svg" class="w-12 h-12 text-white" alt="Success">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">注册成功！</h1>
-                    <p class="text-purple-300">感谢你的填写，你已成功加入队伍</p>
+                    <p class="text-teal-300">你已成功加入“<span class="font-bold">{{ state.teamName || '队伍' }}</span>”</p>
                 </div>
 
-                <!-- Team Info -->
-                <div class="glass rounded-xl p-4 mb-8">
+                <!-- Team Info Box -->
+                 <div class="glass rounded-xl p-4 mb-8">
                      <div class="flex items-center">
-                        <div class="bg-purple-600 rounded-full p-2 mr-3">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
-                        </div>
-                        <div>
-                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                            <p class="text-xs text-gray-400">{{ state.teamCode || '组队码' }} · 成员: {{ state.completionAllMembers.length }}/3</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Member List -->
-                <div class="glass rounded-xl p-4 mb-8">
-                     <h3 class="text-sm font-medium mb-3">队伍成员</h3>
-                    <div class="space-y-3">
-                        <!-- Assuming API returns member data including avatar_url -->
-                        <div v-for="member in state.completionAllMembers" :key="member.nickname + member.color + member.job" class="flex items-center">
-                             <!-- Avatar (Use placeholder if no avatar_url) -->
-                             <div class="rounded-full w-8 h-8 flex items-center justify-center mr-3 bg-gray-700 overflow-hidden border border-gray-600">
-                                <img v-if="member.avatar_url" :src="member.avatar_url" alt="Member Avatar" class="w-full h-full object-cover">
-                                <img v-else src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-4 h-4 text-gray-400" alt="Member Placeholder">
-                             </div>
-                             <!-- Member Info -->
-                             <div>
-                                 <p class="font-medium">{{ member.nickname }} <span v-if="member.maimai_id === state.maimaiId || member.maimaiId === state.maimaiId">(你)</span></p> <!-- Adjust comparison based on API response key -->
-                                 <p class="text-xs text-gray-400">
-                                     <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }} ·
-                                     <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
-                                 </p>
-                             </div>
+                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                          </div>
+                         <div>
+                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
+                             <p class="text-xs text-gray-400">
+                                 {{ state.teamCode || '----' }} · 成员: {{ state.completionAllMembers.length }}/3
+                                 <span v-if="state.completionAllMembers.length === 3" class="ml-1 text-green-400 font-bold">(队伍已满)</span>
+                             </p>
+                        </div>
                     </div>
                 </div>
 
-                 <!-- Sharing Section -->
-                <div class="mb-8">
-                    <h3 class="text-center font-medium mb-4">邀请更多好友加入</h3>
+                <!-- Final Member List -->
+                <div class="glass rounded-xl p-4 mb-8">
+                    <h3 class="text-sm font-medium mb-3">队伍成员</h3>
+                    <div class="space-y-3">
+                         <div v-if="state.completionAllMembers.length === 0" class="text-center text-gray-500 text-sm py-2">队伍信息加载中...</div>
+                         <div v-else v-for="member in state.completionAllMembers" :key="member.nickname /* Assuming nickname is unique in the final list, or use a combined key */" class="flex items-center relative">
+                             <!-- Avatar Placeholder/Image -->
+                             <img
+                                 v-if="member.avatar_url"
+                                 :src="member.avatar_url"
+                                 alt="头像"
+                                 class="rounded-full w-10 h-10 object-cover mr-3 flex-shrink-0 border-2 border-gray-600"
+                                 :class="[`border-${member.color}-500`]"
+                             >
+                             <!-- Default icon if no avatar_url -->
+                              <div
+                                v-else
+                                :class="`color-${member.color}-bg`"
+                                class="rounded-full w-10 h-10 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border-2 border-gray-600"
+                              >
+                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-5 h-5 text-white" :alt="getColorText(member.color)">
+                              </div>
 
-                    <!-- QR Code Generation -->
-                    <div class="qr-code mb-4">
-                         <qrcode-vue v-if="shareUrl" :value="shareUrl" :size="100" level="H" render-as="svg" background="#FFFFFF" foreground="#000000"/>
-                         <p v-else class="text-xs text-gray-600">无法生成二维码</p>
-                    </div>
-
-                    <!-- Share Link Input & Copy -->
-                    <div class="flex mb-4">
-                        <input type="text" id="shareLink" readonly :value="shareUrl" class="share-link w-full rounded-l-lg py-3 px-4 text-white focus:outline-none">
-                        <button id="copyBtn" @click="copyShareLink" class="bg-purple-700 hover:bg-purple-600 rounded-r-lg px-4 transition">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/copy.svg" class="w-5 h-5 text-white" alt="Copy">
-                        </button>
-                    </div>
-
-                    <!-- Placeholder Share Buttons -->
-                    <div class="flex space-x-2">
-                        <button class="flex-1 flex items-center justify-center bg-blue-500 hover:bg-blue-600 rounded-lg py-2 transition">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/message-circle.svg" class="w-5 h-5 text-white mr-2" alt="QQ">
-                            <span>QQ</span>
-                        </button>
-                        <button class="flex-1 flex items-center justify-center bg-green-500 hover:bg-green-600 rounded-lg py-2 transition">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/message-square.svg" class="w-5 h-5 text-white mr-2" alt="WeChat">
-                            <span>微信</span>
-                        </button>
+                             <!-- Member Details -->
+                            <div class="flex-grow">
+                                <p class="font-medium text-sm flex items-center">
+                                    {{ member.nickname }}
+                                     <!-- Highlight "You" based on matching maimaiId -->
+                                     <span v-if="member.maimaiId === state.maimaiId || member.maimai_id === state.maimaiId" class="ml-2 text-xs bg-purple-600 px-1.5 py-0.5 rounded text-white font-bold">你</span>
+                                </p>
+                                <p class="text-xs text-gray-300 flex items-center flex-wrap">
+                                    <span class="flex items-center mr-2">
+                                        <span :class="`color-indicator color-${member.color}-bg`"></span>
+                                        {{ getColorText(member.color) }}
+                                    </span>
+                                    <span class="flex items-center">
+                                         <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1" :alt="getJobText(member.job)">
+                                        {{ getJobText(member.job) }}
+                                    </span>
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <button @click="goHome" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-800">
+                 <!-- Invite Section -->
+                 <div class="mb-8">
+                     <h3 class="text-center font-medium mb-4 text-purple-300">邀请好友加入 ({{ state.completionAllMembers.length }}/3)</h3>
+
+                     <!-- QR Code -->
+                     <div class="qr-code-container mb-4">
+                         <qrcode-vue
+                            v-if="shareLinkUrl"
+                            :value="shareLinkUrl"
+                            :size="140"
+                            level="H"
+                            render-as="svg"
+                            background="#ffffff"
+                            foreground="#111827"
+                            class="rounded-lg shadow-md"
+                          />
+                         <div v-else class="w-[140px] h-[140px] bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 text-xs">
+                            生成中...
+                        </div>
+                     </div>
+
+                     <!-- Share Link Input & Copy Button -->
+                     <div class="flex mb-4">
+                        <input
+                             type="text"
+                             id="shareLink"
+                             readonly
+                             :value="shareLinkUrl"
+                             class="share-link w-full rounded-l-lg py-3 px-4 text-white focus:outline-none text-sm"
+                             placeholder="分享链接生成中..."
+                             aria-label="分享链接"
+                         >
+                         <button
+                             id="copyBtn"
+                             @click="copyShareLink"
+                             class="bg-purple-700 hover:bg-purple-600 rounded-r-lg px-4 transition duration-200 flex items-center justify-center"
+                             :disabled="!shareLinkUrl"
+                             :class="{'opacity-50 cursor-not-allowed': !shareLinkUrl}"
+                             aria-label="复制链接"
+                         >
+                             <img src="https://unpkg.com/lucide-static@latest/icons/copy.svg" class="w-5 h-5 text-white" alt="Copy">
+                        </button>
+                    </div>
+
+                    <!-- Optional: Placeholder Share Buttons -->
+                    <!-- <div class="flex space-x-2">
+                        <button class="flex-1 flex items-center justify-center bg-blue-500 hover:bg-blue-600 rounded-lg py-2 transition text-white font-medium text-sm">
+                            <img src="https://unpkg.com/lucide-static@latest/icons/message-circle.svg" class="w-4 h-4 mr-1.5" alt="QQ">
+                            <span>分享到QQ</span>
+                        </button>
+                        <button class="flex-1 flex items-center justify-center bg-green-500 hover:bg-green-600 rounded-lg py-2 transition text-white font-medium text-sm">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/message-square.svg" class="w-4 h-4 mr-1.5" alt="WeChat">
+                            <span>分享到微信</span>
+                        </button>
+                    </div> -->
+                </div>
+
+                <!-- Back to Home Button -->
+                <button @click="goHome" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回首页
                 </button>
-            </div>
+            </div> <!-- End of Step 5 -->
 
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8">
-                <p>© 2024 MPAM-Lab | {{ websiteLink.replace('https://','').replace('http://','') }}</p> <!-- Display domain from env var -->
+                <!-- 使用环境变量中的域名 -->
+                 <p>© {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\//, '') }}</a></p>
             </div>
 
-        </div> <!-- End Container -->
+        </div> <!-- End of Container -->
 
-         <!-- Modals (Unchanged) -->
-         <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50" v-show="state.showConfirmModal"> /* ... */ </div>
-         <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50" v-show="state.showCreateModal"> /* ... */ </div>
+        <!-- Modals (Keep as they are) -->
+        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-show="state.showConfirmModal">
+            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700">
+                <h3 class="text-xl font-bold mb-4">确认加入队伍</h3>
+                <p class="mb-6 text-sm text-gray-200">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍。当前成员 <span class="font-bold">{{ state.currentTeamMembers.length }}</span>/3。</p>
+                 <!-- Display members in confirm modal -->
+                 <div v-if="state.currentTeamMembers.length > 0" class="mb-4 space-y-2 max-h-24 overflow-y-auto text-xs border-t border-b border-gray-700 py-2">
+                     <span class="font-semibold text-purple-300 block mb-1">现有成员:</span>
+                     <div v-for="member in state.currentTeamMembers" :key="member.nickname" class="flex items-center">
+                         <div :class="`color-indicator color-${member.color}-bg mr-1.5`"></div>
+                         <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1 opacity-80" :alt="getJobText(member.job)">
+                         <span>{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
+                     </div>
+                 </div>
+                 <p v-else class="mb-4 text-sm text-gray-400 italic">队伍目前还没有成员。</p>
 
-        <!-- Loading Overlay (Unchanged) -->
-        <div class="loading-overlay z-50" v-show="state.showLoadingOverlay">
+                <div class="flex space-x-4">
+                    <button @click="state.showConfirmModal = false; state.showLoadingOverlay = false;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
+                        返回修改
+                    </button>
+                    <button @click="confirmJoinTeam" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium">
+                        确认加入
+                    </button>
+                </div>
+            </div>
+        </div>
+
+       <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm" v-show="state.showCreateModal">
+           <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700">
+                <h3 class="text-xl font-bold mb-4">创建新队伍</h3>
+                <p class="mb-4 text-sm text-gray-200">组队码 <span class="font-bold text-purple-400">{{ state.teamCode }}</span> 未被使用。请为你的队伍命名：</p>
+                <div class="mb-6">
+                    <label for="newTeamName" class="block text-sm font-medium text-purple-300 mb-2">队伍名称 <span class="text-red-500">*</span></label>
+                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：银河战舰" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20">
+                     <p v-if="state.errorMessage && state.showCreateModal" class="mt-2 text-xs text-red-400">{{ state.errorMessage }}</p>
+                </div>
+                <div class="flex space-x-4">
+                    <button @click="state.showCreateModal = false; state.errorMessage = null;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
+                        取消
+                    </button>
+                    <button @click="createNewTeam" :disabled="!state.newTeamName" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': !state.newTeamName}">
+                        确认创建
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay (Keep as it is) -->
+        <div class="loading-overlay z-[60]" v-show="state.showLoadingOverlay">
             <div class="spinner"></div>
             <p>处理中，请稍候...</p>
         </div>
 
-         <!-- Celebration Container (Unchanged) -->
+         <!-- Celebration Container (Keep as it is) -->
         <div class="celebration z-0" id="celebration"></div>
 
-    </div> <!-- End Root container -->
+    </div> <!-- End of Root Container -->
 </template>
 
 <style scoped>
 /* Custom styles from previous HTML */
-/* Keeping glass and glow effects */
+/* Base styles */
 .glass {
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px); /* Safari */
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    background: rgba(31, 41, 55, 0.6); /* Darker glass */
+    backdrop-filter: blur(12px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
 }
 .input-code {
-    letter-spacing: 0.5em;
+    /* letter-spacing: 0.5em; */ /* Adjusted tracking in class */
     font-weight: bold;
     text-align: center;
 }
 .btn-glow {
-    box-shadow: 0 0 15px rgba(124, 58, 237, 0.5);
+    box-shadow: 0 0 10px rgba(167, 139, 250, 0.4), 0 0 20px rgba(124, 58, 237, 0.3);
     transition: all 0.3s ease;
 }
-.btn-glow:hover {
-    box-shadow: 0 0 25px rgba(124, 58, 237, 0.8);
+.btn-glow:hover:not(:disabled) {
+    box-shadow: 0 0 15px rgba(167, 139, 250, 0.6), 0 0 30px rgba(124, 58, 237, 0.5);
     transform: translateY(-2px);
 }
 .fade-in {
-    animation: fadeIn 0.3s ease-in-out;
+    animation: fadeIn 0.5s ease-in-out;
 }
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
 }
+
+/* Selection Options (Color/Job) */
 .color-option, .job-option {
-    transition: all 0.3s ease;
+    transition: all 0.2s ease-in-out;
     cursor: pointer;
-    position: relative; /* Needed for ::after */
-    border-radius: 1rem; /* Match container border */
-    padding: 0.5rem; /* Add some padding */
-    border: 2px solid transparent; /* Placeholder for selected border */
+    border-radius: 1rem; /* Rounded corners for the whole option */
+    padding: 10px 5px;
+    position: relative; /* For disabled overlay */
+    border: 2px solid transparent;
 }
 .color-option:not(.disabled-option):hover, .job-option:not(.disabled-option):hover {
-    transform: translateY(-5px);
+    transform: translateY(-4px);
     background-color: rgba(255, 255, 255, 0.05);
 }
 .color-option.selected, .job-option.selected {
-    /* transform: scale(1.02); */
-    /* box-shadow: 0 0 15px rgba(124, 58, 237, 0.8); */
-    border-color: #a78bfa; /* Highlight border on select */
-    background-color: rgba(167, 139, 250, 0.1);
+    transform: scale(1.05);
+    border-color: #a78bfa; /* Purple border when selected */
+     background-color: rgba(167, 139, 250, 0.1);
 }
+.color-option > div, .job-option > div { /* Style the icon container */
+    transition: transform 0.2s ease-in-out;
+}
+.color-option.selected > div, .job-option.selected > div {
+    transform: scale(1.1); /* Slightly larger icon when selected */
+}
+
 /* Background gradients for colors */
-.color-red-bg { background: linear-gradient(135deg, #ff5f6d, #ff0844); }
-.color-green-bg { background: linear-gradient(135deg, #00b09b, #00d084); }
-.color-blue-bg { background: linear-gradient(135deg, #4facfe, #00f2fe); }
-/* Shadows for color options */
-.color-red-shadow { box-shadow: 0 10px 20px rgba(255, 8, 68, 0.3); }
-.color-green-shadow { box-shadow: 0 10px 20px rgba(0, 208, 132, 0.3); }
-.color-blue-shadow { box-shadow: 0 10px 20px rgba(79, 172, 254, 0.3); }
+.color-red-bg { background: linear-gradient(135deg, #ef4444, #dc2626); }
+.color-green-bg { background: linear-gradient(135deg, #22c55e, #16a34a); }
+.color-blue-bg { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+/* Subtle shadows for color options */
+.color-red-shadow { box-shadow: 0 6px 12px rgba(220, 38, 38, 0.3); }
+.color-green-shadow { box-shadow: 0 6px 12px rgba(22, 163, 74, 0.3); }
+.color-blue-shadow { box-shadow: 0 6px 12px rgba(37, 99, 235, 0.3); }
 
 /* Background gradients for jobs */
-.job-attacker-bg { background: linear-gradient(135deg, #ff9a9e, #fad0c4); }
-.job-defender-bg { background: linear-gradient(135deg, #a1c4fd, #c2e9fb); }
-.job-supporter-bg { background: linear-gradient(135deg, #d4fc79, #96e6a1); }
+.job-attacker-bg { background: linear-gradient(135deg, #f97316, #ea580c); } /* Orange */
+.job-defender-bg { background: linear-gradient(135deg, #6366f1, #4f46e5); } /* Indigo */
+.job-supporter-bg { background: linear-gradient(135deg, #ec4899, #db2777); } /* Pink */
+.job-shadow { box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2); }
+.job-summary-shadow {box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); } /* For summary icons */
 
+/* Progress Bar */
 .progress-bar {
-    height: 4px;
+    height: 6px; /* Slightly thicker */
     background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
+    border-radius: 3px;
     overflow: hidden;
 }
 .progress-fill {
     height: 100%;
     background: linear-gradient(90deg, #a78bfa, #8b5cf6);
-    border-radius: 2px;
+    border-radius: 3px;
     transition: width 0.5s ease-in-out;
 }
+
+/* Disabled Options Styling */
 .disabled-option {
-    opacity: 0.4; /* Dim more */
+    opacity: 0.4;
     cursor: not-allowed;
-    pointer-events: none; /* Disable clicks */
+    /* pointer-events: none; REMOVED - better to show tooltip */
     position: relative;
 }
+.disabled-option:hover {
+    transform: none; /* Don't lift on hover if disabled */
+     background-color: transparent;
+}
 .disabled-option::after {
-    content: "已被选"; /* Shorter text */
+    content: "已被选择";
     position: absolute;
-    bottom: 5px;
+    bottom: 10px; /* Position at bottom */
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
     padding: 3px 8px;
     border-radius: 4px;
-    font-size: 11px; /* Smaller font */
-    color: white;
+    font-size: 10px;
     white-space: nowrap;
-    z-index: 1; /* Make sure it's above icon */
+    opacity: 0; /* Hidden by default */
+    transition: opacity 0.2s ease;
+    pointer-events: none; /* Tooltip shouldn't block */
 }
+.disabled-option:hover::after {
+    opacity: 1; /* Show tooltip on hover */
+}
+
+/* Member List Indicator */
 .color-indicator {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     display: inline-block;
-    margin-right: 4px;
-    vertical-align: middle; /* Align better with text */
+    margin-right: 6px;
+    vertical-align: middle;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
 }
+
+/* Form Inputs */
 .form-input {
     background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     transition: all 0.3s ease;
+    color: white; /* Ensure text is white */
 }
 .form-input:focus {
     background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+    border: 1px solid rgba(167, 139, 250, 0.7); /* Purple border on focus */
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3); /* Purple glow on focus */
+    outline: none; /* Remove default outline */
 }
+/* Style checkbox */
+input[type="checkbox"] {
+  appearance: none;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0;
+  display: inline-block;
+  position: relative;
+  cursor: pointer;
+}
+input[type="checkbox"]:checked {
+  background-color: #8b5cf6; /* Purple check */
+  border-color: #a78bfa;
+}
+input[type="checkbox"]:checked::before {
+  content: '✔';
+  display: block;
+  position: absolute;
+  top: -2px;
+  left: 1px;
+  font-size: 12px;
+  color: white;
+}
+input[type="checkbox"]:focus {
+  outline: _2px solid #a78bfa;
+  outline-offset: 2px;
+}
+::-webkit-input-placeholder { /* WebKit, Blink, Edge */
+    color:    #6b7280; /* gray-500 */
+    opacity: 0.8;
+}
+:-moz-placeholder { /* Mozilla Firefox 4 to 18 */
+   color:    #6b7280;
+   opacity:  0.8;
+}
+::-moz-placeholder { /* Mozilla Firefox 19+ */
+   color:    #6b7280;
+   opacity:  0.8;
+}
+:-ms-input-placeholder { /* Internet Explorer 10-11 */
+   color:    #6b7280;
+   opacity: 0.8;
+}
+::-ms-input-placeholder { /* Microsoft Edge */
+   color:    #6b7280;
+   opacity: 0.8;
+}
+::placeholder { /* Most modern browsers */
+   color:    #6b7280;
+   opacity: 0.8;
+}
+
+/* Loading Overlay */
 .loading-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.7);
-    z-index: 100; /* Make sure it's above modals */
+    inset: 0; /* top, right, bottom, left = 0 */
+    background: rgba(17, 24, 39, 0.8); /* bg-gray-900 with opacity */
+    backdrop-filter: blur(4px);
+    z-index: 60; /* Ensure it's above content but potentially below modals if needed */
     display: flex;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     color: white;
     text-align: center;
-    backdrop-filter: blur(5px); /* Add blur effect */
-    -webkit-backdrop-filter: blur(5px);
 }
 .spinner {
-    border: 4px solid rgba(255, 255, 255, 0.1);
+    border: 4px solid rgba(255, 255, 255, 0.2);
     border-radius: 50%;
-    border-top: 4px solid #8b5cf6;
+    border-top-color: #a78bfa; /* Purple */
     width: 40px;
     height: 40px;
-    animation: spin 1s linear infinite;
+    animation: spin 0.8s linear infinite;
     margin-bottom: 16px;
 }
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    to { transform: rotate(360deg); }
 }
+
+/* Confetti Styles */
 .confetti {
     position: fixed;
     width: 10px;
     height: 10px;
-    animation: confetti 5s ease-in-out infinite;
+    /* Background color set by JS */
+    animation: confetti-fall 5s linear forwards; /* Changed animation */
     z-index: 1; /* Above background, below content */
+    border-radius: 2px; /* Slightly less round? */
+    mix-blend-mode: screen; /* Try screen blend mode */
+    opacity: 0.9;
 }
-@keyframes confetti {
+@keyframes confetti-fall {
     0% {
-        transform: translateY(0) rotate(0deg);
+        transform: translateY(-20px) rotate(0deg) scale(1);
         opacity: 1;
     }
+     50% {
+         transform: translateY(50vh) rotate(360deg) scale(0.8);
+         opacity: 0.8;
+     }
     100% {
-        transform: translateY(100vh) rotate(720deg);
+        transform: translateY(105vh) rotate(720deg) scale(0.5);
         opacity: 0;
     }
-}
-.qr-code {
-    background: white; /* Ensure white background for QR code readability */
-    padding: 10px; /* Adjust padding as needed */
-    border-radius: 8px;
-    width: 120px; /* Container size matches QR code size + padding */
-    height: 120px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-}
-/* Ensure QR code SVG scales if needed */
-.qr-code > svg {
-    display: block;
-    width: 100%;
-    height: 100%;
-}
-
-.share-link {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    transition: all 0.3s ease;
-    /* Prevent text selection highlight */
-    user-select: none;
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
 }
 .celebration {
     position: fixed;
@@ -1021,28 +1264,54 @@ onUnmounted(() => {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: 0; /* Behind everything except background */
-    overflow: hidden; /* Prevent confetti causing scroll */
+    z-index: 1; /* Ensure confetti is behind interactive elements */
+    overflow: hidden; /* Prevent scrollbars caused by confetti */
+}
+
+/* QR Code & Share Link */
+.qr-code-container {
+    background: white;
+    padding: 10px; /* Padding around the QR code */
+    border-radius: 12px; /* Rounded corners for the white background */
+    width: 160px; /* Fit the 140px QR code + padding */
+    height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto; /* Center the box */
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+}
+/* Ensure SVG QR Code fits */
+.qr-code-container > svg {
+    display: block; /* Remove extra space below SVG */
+    width: 140px;
+    height: 140px;
+}
+
+.share-link {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    transition: all 0.3s ease;
+}
+.share-link::selection {
+    background-color: #a78bfa;
+    color: white;
 }
 
 /* Responsive adjustments */
+/* Inherited max-width adjustment from previous snippet */
 @media (min-width: 640px) {
-    .container {
-        max-width: 26rem; /* Slightly adjusted max-width */
-    }
+    /* .container { max-width: 28rem; } */ /* Already set to max-w-md */
 }
-/* Remove the problematic global overflow hidden */
-/* html, body {
-    overflow: hidden;
-} */
 
-/* Ensure form elements have consistent background in dark mode */
-input[type="text"], input[type="checkbox"], input[type="file"], button {
-     color-scheme: dark; /* Hint for browser styling */
-}
-input[type="checkbox"] {
-    width: 1rem;
-    height: 1rem;
-    accent-color: #8b5cf6; /* Style checkbox color */
-}
+/* Remove body overflow hidden */
+/* html, body { */
+/*    overflow: visible; */ /* Allow scrolling if content exceeds viewport */
+/* } */
+
+/* Ensure root div handles scrolling */
+/* div[class*="min-h-screen"] { */
+/*    overflow-y: auto; */ /* Already set on root div */
+/* } */
+
 </style>
