@@ -250,15 +250,30 @@ function getColorText(colorId) {
      return map[colorId] || '';
 }
 
-// 获取颜色对应的 Lucide 图标名称
-function getColorIcon(colorId) {
-    const map = { red: 'flame', green: 'leaf', blue: 'droplets' };
-    return map[colorId] || 'help-circle'; // 提供默认图标
+// *****************************************************
+// --- 替换图标逻辑 ---
+// 创建一个新的函数来根据类型和值获取本地 SVG 路径
+function getIconPath(type, value) {
+    const paths = {
+        color: {
+            red: 'applyForm-web/src/assets/fire.svg',
+            green: 'applyForm-web/src/assets/wood.svg',
+            blue: 'applyForm-web/src/assets/water.svg'
+        },
+        job: {
+            attacker: 'applyForm-web/src/assets/attacker.svg',
+            defender: 'applyForm-web/src/assets/defender.svg',
+            supporter: 'applyForm-web/src/assets/supporter.svg'
+        }
+    };
+    return paths[type]?.[value] || ''; // 如果找不到路径，返回空字符串，避免无效 src
 }
+// --- 结束替换图标逻辑 ---
+// *****************************************************
 
 // 选择职业
 function selectJob(jobId) {
-     const jobType = jobId.replace('job-', ''); // jobId might be 'job-attacker'
+     const jobType = jobId.replace('job-', ''); // jobId might be 'job-attacker', extract 'attacker'
     if (!isJobDisabled.value(jobType)) {
         state.selectedJob = jobType;
     }
@@ -268,12 +283,6 @@ function selectJob(jobId) {
 function getJobText(jobType) {
     const map = { attacker: '攻击手', defender: '防御手', supporter: '辅助手' };
     return map[jobType] || '';
-}
-
-// 获取职业对应的 Lucide 图标名称
-function getJobIcon(jobType) {
-    const map = { attacker: 'swords', defender: 'shield', supporter: 'heart-pulse' };
-    return map[jobType] || 'help-circle';// 提供默认图标
 }
 
 // Step 4: 处理头像文件选择和预览
@@ -429,6 +438,9 @@ function handleCopyFeedback() {
      const copyBtn = document.getElementById('copyBtn'); // Ensure this ID exists
      if (copyBtn) {
          const originalIconHTML = copyBtn.innerHTML;
+         // NOTE: This icon uses a Lucide static URL. The request didn't mention replacing copy/check icons.
+         // If you want to replace this checkmark with a local SVG, you'd need to add a path for it
+         // in the getIconPath function or manage its src separately. Sticking to replacing jobs/colors only for now.
          copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
          copyBtn.disabled = true; // Temporarily disable
          setTimeout(() => {
@@ -717,10 +729,10 @@ async function saveChanges() {
          return;
      }
      // Validate new nickname length if provided
-     if (state.editNewNickname !== null && state.editNewNickname.trim() !== '' && (state.editNewNickname.trim().length === 0 || state.editNewNickname.trim().length > 50)) {
+      if (state.editNewNickname !== null && state.editNewNickname.trim() !== '' && (state.editNewNickname.trim().length === 0 || state.editNewNickname.trim().length > 50)) {
           state.errorMessage = '新称呼长度需在1到50个字符之间。';
           return;
-     }
+      }
 
     state.showLoadingOverlay = true;
 
@@ -786,7 +798,8 @@ async function saveChanges() {
                  // Find the index in the Step 5 members list (`completionAllMembers`)
                  const indexCompletion = state.completionAllMembers.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
                  if (indexCompletion !== -1) {
-                     // Use Vue.set or array spread to ensure reactivity
+                     // Update reactivity - important for Vue 3 reactivity, spreading might be enough
+                     // Ensure deep reactivity if needed, but simple field updates should be fine
                       state.completionAllMembers[indexCompletion] = { ...state.completionAllMembers[indexCompletion], ...data.member };
                      console.log("Updated member in completionAllMembers array.");
                  } else {
@@ -799,7 +812,7 @@ async function saveChanges() {
                  const indexCurrent = state.currentTeamMembers.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
                   if (indexCurrent !== -1) {
                        // Note: currentTeamMembers might have fewer fields than completionAllMembers
-                       // Only update fields that are present in currentTeamMembers
+                       // Only update fields that are present in currentTeamMembers or are expected
                       state.currentTeamMembers[indexCurrent] = {
                            ...state.currentTeamMembers[indexCurrent],
                            maimai_id: data.member.maimai_id, // Ensure maimai_id is carried over
@@ -1029,9 +1042,11 @@ onUnmounted(() => {
              <!-- Use fade-in-up for transition -->
              <transition name="fade-in-up">
                  <div v-if="state.errorMessage && (!state.showConfirmModal && !state.showCreateModal && !state.showEditModal  && !state.showLoadingOverlay)" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                     <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                      <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                      <span class="break-words flex-grow">{{ state.errorMessage }}</span> <!-- Allow text to wrap -->
                     <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.errorMessage = null" aria-label="关闭错误消息">
+                        <!-- NOTE: This icon uses hardcoded SVG path (likely Lucide source) - keeping as per original -->
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                     </button>
                 </div>
@@ -1042,9 +1057,10 @@ onUnmounted(() => {
                 <!-- Header -->
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
+                        <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                         <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-12 h-12 text-white" alt="Team">
                     </div>
-                    <h1 class="text-3xl font-bold mb-2">舞萌队伍注册</h1>
+                    <h1 class="text-3xl font-bold mb-2">NGU 3rd 比赛报名</h1>
                     <p class="text-purple-300">输入四位数组队码加入或创建队伍</p>
                 </div>
 
@@ -1084,6 +1100,7 @@ onUnmounted(() => {
                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
                      <div class="flex items-center">
                          <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
+                             <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                              <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                         </div>
                         <div>
@@ -1099,7 +1116,10 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }"
                          @click="selectColor('red')" @keydown.enter="selectColor('red')" @keydown.space="selectColor('red')">
                         <div class="color-red-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/flame.svg" class="w-10 h-10 text-white" :alt="getColorText('red')">
+                             <!-- ***************************************************** -->
+                             <!-- 替换这里的 Lucide 颜色图标 -->
+                             <img :src="getIconPath('color', 'red')" class="w-10 h-10 text-white" :alt="getColorText('red') + '图标'">
+                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('red') }}</p>
                     </div>
@@ -1107,7 +1127,10 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }"
                          @click="selectColor('green')" @keydown.enter="selectColor('green')" @keydown.space="selectColor('green')">
                         <div class="color-green-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/leaf.svg" class="w-10 h-10 text-white" :alt="getColorText('green')">
+                             <!-- ***************************************************** -->
+                             <!-- 替换这里的 Lucide 颜色图标 -->
+                             <img :src="getIconPath('color', 'green')" class="w-10 h-10 text-white" :alt="getColorText('green') + '图标'">
+                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('green') }}</p>
                     </div>
@@ -1115,7 +1138,10 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }"
                          @click="selectColor('blue')" @keydown.enter="selectColor('blue')" @keydown.space="selectColor('blue')">
                         <div class="color-blue-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/droplets.svg" class="w-10 h-10 text-white" :alt="getColorText('blue')">
+                             <!-- ***************************************************** -->
+                             <!-- 替换这里的 Lucide 颜色图标 -->
+                             <img :src="getIconPath('color', 'blue')" class="w-10 h-10 text-white" :alt="getColorText('blue') + '图标'">
+                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getColorText('blue') }}</p>
                     </div>
@@ -1123,7 +1149,7 @@ onUnmounted(() => {
 
                 <!-- Current Members Box (Compact display) -->
                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                    <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
+                     <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
                     <div class="space-y-3 max-h-32 overflow-y-auto"> <!-- Added max height and overflow -->
                          <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
                         <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname /* Better key */" class="flex items-center">
@@ -1140,7 +1166,10 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
                               >
-                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(member.color)">
+                                <!-- ***************************************************** -->
+                                <!-- 替换这里的 Lucide 颜色图标 -->
+                                <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
+                                <!-- ***************************************************** -->
                               </div>
 
                             <div>
@@ -1150,7 +1179,11 @@ onUnmounted(() => {
                                          <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
                                      </span>
                                     <span class="flex items-center">
-                                        <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
+                                         <!-- ***************************************************** -->
+                                         <!-- 替换这里的 Lucide 职业图标 -->
+                                        <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                         <!-- ***************************************************** -->
+                                        {{ getJobText(member.job) }}
                                     </span>
                                 </p>
                             </div>
@@ -1180,6 +1213,7 @@ onUnmounted(() => {
                      <div class="flex items-center justify-between">
                          <div class="flex items-center">
                              <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
+                                <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                                 <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                             </div>
                             <div>
@@ -1190,7 +1224,10 @@ onUnmounted(() => {
                          <!-- Selected Color Display -->
                          <div class="flex items-center glass rounded-full px-3 py-1 border border-gray-600 flex-shrink-0">
                             <div :class="`color-${state.selectedColor}-bg`" class="rounded-full w-5 h-5 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm">
-                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-3 h-3 text-white" :alt="getColorText(state.selectedColor)">
+                                <!-- ***************************************************** -->
+                                <!-- 替换这里的 Lucide 颜色图标 -->
+                                <img :src="getIconPath('color', state.selectedColor)" class="w-3 h-3 text-white" :alt="getColorText(state.selectedColor) + '图标'">
+                                <!-- ***************************************************** -->
                             </div>
                             <span class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</span>
                         </div>
@@ -1203,7 +1240,10 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
                          @click="selectJob('job-attacker');" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
                          <div class="job-attacker-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/swords.svg" class="w-10 h-10 text-white" :alt="getJobText('attacker')">
+                             <!-- ***************************************************** -->
+                             <!-- 替换这里的 Lucide 职业图标 -->
+                             <img :src="getIconPath('job', 'attacker')" class="w-10 h-10 text-white" :alt="getJobText('attacker') + '图标'">
+                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('attacker') }}</p>
                     </div>
@@ -1211,7 +1251,10 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
                          @click="selectJob('job-defender')" @keydown.enter="selectJob('job-defender')" @keydown.space="selectJob('job-defender')">
                          <div class="job-defender-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/shield.svg" class="w-10 h-10 text-white" :alt="getJobText('defender')">
+                             <!-- ***************************************************** -->
+                             <!-- 替换这里的 Lucide 职业图标 -->
+                             <img :src="getIconPath('job', 'defender')" class="w-10 h-10 text-white" :alt="getJobText('defender') + '图标'">
+                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('defender') }}</p>
                     </div>
@@ -1219,7 +1262,10 @@ onUnmounted(() => {
                          :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
                          @click="selectJob('job-supporter')" @keydown.enter="selectJob('job-supporter')" @keydown.space="selectJob('job-supporter')">
                         <div class="job-supporter-bg rounded-full w-20 h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                            <img src="https://unpkg.com/lucide-static@latest/icons/heart-pulse.svg" class="w-10 h-10 text-white" :alt="getJobText('supporter')">
+                            <!-- ***************************************************** -->
+                            <!-- 替换这里的 Lucide 职业图标 -->
+                            <img :src="getIconPath('job', 'supporter')" class="w-10 h-10 text-white" :alt="getJobText('supporter') + '图标'">
+                             <!-- ***************************************************** -->
                         </div>
                         <p class="text-center font-medium text-sm">{{ getJobText('supporter') }}</p>
                     </div>
@@ -1230,7 +1276,7 @@ onUnmounted(() => {
                      <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
                     <div class="space-y-3 max-h-32 overflow-y-auto"> <!-- Added max height and overflow -->
                          <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
-                        <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center">
+                         <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center">
                               <!-- Avatar or Icon -->
                               <img
                                  v-if="member.avatar_url"
@@ -1244,7 +1290,10 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
                               >
-                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(member.color)">
+                                 <!-- ***************************************************** -->
+                                 <!-- 替换这里的 Lucide 颜色图标 -->
+                                <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
+                                 <!-- ***************************************************** -->
                               </div>
 
                             <div>
@@ -1254,7 +1303,11 @@ onUnmounted(() => {
                                          <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
                                      </span>
                                     <span class="flex items-center">
-                                        <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job)"> {{ getJobText(member.job) }}
+                                         <!-- ***************************************************** -->
+                                         <!-- 替换这里的 Lucide 职业图标 -->
+                                         <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                         <!-- ***************************************************** -->
+                                        {{ getJobText(member.job) }}
                                     </span>
                                 </p>
                             </div>
@@ -1286,6 +1339,7 @@ onUnmounted(() => {
                          <!-- Team -->
                         <div class="text-center flex flex-col items-center">
                              <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mb-1 shadow-md flex-shrink-0">
+                                <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                                 <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-4 h-4 text-white" alt="Team">
                             </div>
                             <p class="text-xs font-medium text-gray-200">{{ state.teamName || '队伍' }}</p>
@@ -1294,14 +1348,20 @@ onUnmounted(() => {
                          <!-- Color -->
                          <div class="text-center flex flex-col items-center">
                             <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex-shrink-0">
-                                 <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(state.selectedColor)}.svg`" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor)">
+                                <!-- ***************************************************** -->
+                                <!-- 替换这里的 Lucide 颜色图标 -->
+                                 <img :src="getIconPath('color', state.selectedColor)" class="w-4 h-4 text-white" :alt="getColorText(state.selectedColor) + '图标'">
+                                 <!-- ***************************************************** -->
                              </div>
                              <p class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</p>
                         </div>
                          <!-- Job -->
                          <div class="text-center flex flex-col items-center">
                             <div :class="`job-${state.selectedJob}-bg`" class="rounded-full p-2 mb-1 shadow-md job-summary-shadow flex-shrink-0">
-                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(state.selectedJob)}.svg`" class="w-4 h-4 text-white" :alt="getJobText(state.selectedJob)">
+                                <!-- ***************************************************** -->
+                                <!-- 替换这里的 Lucide 职业图标 -->
+                                <img :src="getIconPath('job', state.selectedJob)" class="w-4 h-4 text-white" :alt="getJobText(state.selectedJob) + '图标'">
+                                <!-- ***************************************************** -->
                             </div>
                              <p class="text-xs font-medium text-gray-200">{{ getJobText(state.selectedJob) || '职业' }}</p>
                         </div>
@@ -1319,6 +1379,7 @@ onUnmounted(() => {
                             <!-- Preview Image -->
                             <img v-if="state.avatarPreviewUrl" :src="state.avatarPreviewUrl" alt="头像预览" class="w-24 h-24 rounded-full object-cover border-2 border-purple-500 shadow-md">
                             <div v-else class="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600">
+                                <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-10 h-10 text-gray-400" alt="Default Avatar">
                             </div>
                              <!-- File Input Button using a label -->
@@ -1335,18 +1396,18 @@ onUnmounted(() => {
                     <!-- Other Fields -->
                     <div class="mb-4">
                         <label for="maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID <span class="text-red-500">*</span></label>
-                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：1234567890123" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="13">
+                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：Om1tted" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="13">
                          <p class="mt-1 text-xs text-gray-400">用于唯一识别你的报名信息，未来修改/删除时需提供</p>
                     </div>
 
                     <div class="mb-4">
                         <label for="nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼 <span class="text-red-500">*</span></label>
-                        <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：小明" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
+                        <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：om1t" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
                     </div>
 
                     <div class="mb-6">
                         <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
-                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="方便队长联系 (非0开头，5-15位数字)" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
+                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
                          <p class="mt-1 text-xs text-gray-400">用于验证你的身份，请务必准确填写。</p>
                     </div>
 
@@ -1387,6 +1448,7 @@ onUnmounted(() => {
                 <!-- Success Message -->
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 bg-gradient-to-br from-green-500 to-teal-500 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
+                        <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                         <img src="https://unpkg.com/lucide-static@latest/icons/check-circle.svg" class="w-12 h-12 text-white" alt="Success">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">注册成功！</h1>
@@ -1397,6 +1459,7 @@ onUnmounted(() => {
                  <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
                      <div class="flex items-center">
                          <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
+                             <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                              <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
                          </div>
                          <div>
@@ -1415,7 +1478,7 @@ onUnmounted(() => {
                      <!-- Use flex-col for list container to stack items -->
                     <div class="space-y-3 max-h-48 overflow-y-auto"> <!-- Added max height and overflow -->
                          <div v-if="state.completionAllMembers.length === 0" class="text-center text-gray-500 text-sm py-2">队伍信息加载中...</div>
-                         <div v-else v-for="member in state.completionAllMembers" :key="member.maimai_id || member.maimaiId || member.nickname /* Use maimaiId or combined as key */" class="flex items-center relative">
+                         <div v-else v-for="member in state.completionAllMembers" :key="member.maimai_id || member.maimaiId || (member.nickname + member.qqNumber) /* Use maimaiId or combined as key */" class="flex items-center relative">
                              <!-- Avatar or Icon -->
                              <img
                                  v-if="member.avatar_url"
@@ -1430,7 +1493,10 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-10 h-10 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border-2 border-gray-600"
                               >
-                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-5 h-5 text-white" :alt="getColorText(member.color)">
+                                <!-- ***************************************************** -->
+                                <!-- 替换这里的 Lucide 颜色图标 -->
+                                <img :src="getIconPath('color', member.color)" class="w-5 h-5 text-white" :alt="getColorText(member.color) + '图标'">
+                                <!-- ***************************************************** -->
                               </div>
 
                              <!-- Member Details -->
@@ -1447,7 +1513,10 @@ onUnmounted(() => {
                                         {{ getColorText(member.color) }}
                                     </span>
                                     <span class="flex items-center">
-                                         <img :src="`https://unpkg.com/lucide-static@latest/icons/${getJobIcon(member.job)}.svg`" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job)">
+                                         <!-- ***************************************************** -->
+                                         <!-- 替换这里的 Lucide 职业图标 -->
+                                         <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                         <!-- ***************************************************** -->
                                         {{ getJobText(member.job) }}
                                     </span>
                                 </p>
@@ -1461,6 +1530,7 @@ onUnmounted(() => {
                      <div class="mt-6 text-center">
                          <!-- This button triggers the modal for the CURRENT user -->
                          <button @click="openEditModal(state.maimaiId)" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center mx-auto">
+                             <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                              <img src="https://unpkg.com/lucide-static@latest/icons/edit.svg" class="w-4 h-4 mr-2" alt="Edit">
                              修改我的报名信息
                          </button>
@@ -1508,6 +1578,7 @@ onUnmounted(() => {
                              :class="{'opacity-50 cursor-not-allowed': !shareLinkUrl}"
                              aria-label="复制链接"
                          >
+                             <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                              <img src="https://unpkg.com/lucide-static@latest/icons/copy.svg" class="w-5 h-5 text-white" alt="Copy">
                         </button>
                     </div>
@@ -1524,7 +1595,7 @@ onUnmounted(() => {
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10"> <!-- Ensure footer is above confetti -->
                 <!-- Use environment variable domain -->
-                 <p>© {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
+                 <p>© {{ new Date().getFullYear() }} NGU Team © {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
             </div>
 
         </div> <!-- End of Container -->
@@ -1540,7 +1611,7 @@ onUnmounted(() => {
                      <span class="font-semibold text-purple-300 block mb-1">现有成员:</span>
                      <!-- Use flex layout for each member item to place button on the right -->
                      <!-- Using member.maimai_id as primary key for the list -->
-                      <div v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center justify-between">
+                      <div v-for="member in state.currentTeamMembers" :key="member.maimai_id || (member.nickname + member.qqNumber)" class="flex items-center justify-between">
                          <!-- Left side: Avatar/Icon and Details -->
                          <div class="flex items-center flex-grow mr-2">
                              <!-- Avatar or Icon -->
@@ -1556,7 +1627,10 @@ onUnmounted(() => {
                                 :class="`color-${member.color}-bg`"
                                 class="rounded-full w-6 h-6 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm border border-gray-600"
                               >
-                                <img :src="`https://unpkg.com/lucide-static@latest/icons/${getColorIcon(member.color)}.svg`" class="w-3 h-3 text-white" :alt="getColorText(member.color)">
+                                 <!-- ***************************************************** -->
+                                 <!-- 替换这里的 Lucide 颜色图标 -->
+                                <img :src="getIconPath('color', member.color)" class="w-3 h-3 text-white" :alt="getColorText(member.color) + '图标'">
+                                 <!-- ***************************************************** -->
                               </div>
                              <!-- Name and Details -->
                              <span class="text-gray-300 flex-grow">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
@@ -1594,7 +1668,7 @@ onUnmounted(() => {
                 <p class="mb-4 text-sm text-gray-200">组队码 <span class="font-bold text-purple-400">{{ state.teamCode }}</span> 未被使用。请为你的队伍命名：</p>
                 <div class="mb-6">
                     <label for="newTeamName" class="block text-sm font-medium text-purple-300 mb-2">队伍名称 <span class="text-red-500">*</span></label>
-                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：银河战舰" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20" @keydown.enter="createNewTeam">
+                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：对不队" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20" @keydown.enter="createNewTeam">
                      <p v-if="state.errorMessage && state.showCreateModal" class="mt-2 text-xs text-red-400">{{ state.errorMessage }}</p>
                 </div>
                 <div class="flex space-x-4">
@@ -1658,6 +1732,7 @@ onUnmounted(() => {
                              <!-- Preview Image -->
                              <img v-if="state.editNewAvatarPreviewUrl" :src="state.editNewAvatarPreviewUrl" alt="新头像预览" class="w-20 h-20 rounded-full object-cover border-2 border-purple-500 shadow-md">
                              <div v-else class="w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600">
+                                 <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                                  <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-8 h-8 text-gray-400" alt="Default Avatar">
                              </div>
                               <!-- File Input Button -->
@@ -1700,9 +1775,12 @@ onUnmounted(() => {
                         <select id="edit-color" v-model="state.editNewColor" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
                              <option value="">-- 留空不修改 --</option>
                              <!-- Use computed property for disabled status -->
+                            <!-- ***************************************************** -->
+                             <!-- 这里不需要图标，直接使用文本 -->
                             <option value="red" :disabled="isColorDisabled('red')" :class="{'opacity-50': isColorDisabled('red')}">{{ getColorText('red') }}</option>
                             <option value="green" :disabled="isColorDisabled('green')" :class="{'opacity-50': isColorDisabled('green')}">{{ getColorText('green') }}</option>
                             <option value="blue" :disabled="isColorDisabled('blue')" :class="{'opacity-50': isColorDisabled('blue')}">{{ getColorText('blue') }}</option>
+                             <!-- ***************************************************** -->
                         </select>
                     </div>
 
@@ -1711,9 +1789,12 @@ onUnmounted(() => {
                         <select id="edit-job" v-model="state.editNewJob" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
                              <option value="">-- 留空不修改 --</option>
                              <!-- Use computed property for disabled status -->
+                             <!-- ***************************************************** -->
+                             <!-- 这里不需要图标，直接使用文本 -->
                              <option value="attacker" :disabled="isJobDisabled('attacker')" :class="{'opacity-50': isJobDisabled('attacker')}">{{ getJobText('attacker') }}</option>
                             <option value="defender" :disabled="isJobDisabled('defender')" :class="{'opacity-50': isJobDisabled('defender')}">{{ getJobText('defender') }}</option>
                             <option value="supporter" :disabled="isJobDisabled('supporter')" :class="{'opacity-50': isJobDisabled('supporter')}">{{ getJobText('supporter') }}</option>
+                             <!-- ***************************************************** -->
                         </select>
                     </div>
                  </div>
@@ -1732,6 +1813,7 @@ onUnmounted(() => {
                 <!-- Error message within modal -->
                 <transition name="fade-in-up">
                 <div v-if="state.errorMessage && state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                    <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
                     <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                     <span class="break-words flex-grow">{{ state.errorMessage }}</span>
                  </div>
@@ -1937,6 +2019,7 @@ input[type="checkbox"]::before {
     width: 8px; /* Size of the checkmark */
     height: 8px;
     background-color: white;
+    /* NOTE: This mask uses hardcoded SVG path (likely Lucide source) - keeping as per original */
     mask: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="20 6 9 17 4 12"%3E%3C/polyline%3E%3C/svg%3E') no-repeat center center;
     mask-size: contain;
     transition: transform 0.2s ease-in-out;
@@ -1986,6 +2069,7 @@ input[type="checkbox"].text-red-600:checked {
 /* SELECT styling (improve native select appearance) */
 select.form-input {
     /* Add custom styling for dropdown arrow if appearance: none; is used */
+    /* NOTE: This uses hardcoded SVG path (likely Lucide source) - keeping as per original */
     background-image: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpolyline points="6 9 12 15 18 9"%3E%3C/polyline%3E%3C/svg%3E');
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
