@@ -1068,7 +1068,7 @@ onUnmounted(() => {
     <!-- Removed overflow-hidden from root to allow modal scroll if needed, added to confetti container -->
     <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
          <!-- 动态三角形背景 -->
-         <div id="triangles" class="absolute inset-0 z-0"></div>
+         <div id="triangles" class="absolute inset-0 z-0 overflow-hidden"></div>
         <!-- Main Content Container, centered with max-width -->
         <div class="w-full max-w-md mx-auto relative z-10"> <!-- Content should be above confetti -->
             
@@ -2027,24 +2027,6 @@ onUnmounted(() => {
 .disabled-option:hover::after {
     opacity: 1; /* Show tooltip on hover */
 }
-/* 添加三角形动画样式 */
-.triangle {
-    position: absolute;
-    width: 0;
-    height: 0;
-    opacity: 0.1; /* 降低不透明度以免干扰内容 */
-    animation: float 20s infinite linear;
-    z-index: 0; /* 确保在内容下方 */
-}
-
-@keyframes float {
-    0% {
-        transform: translateY(0) rotate(0deg);
-    }
-    100% {
-        transform: translateY(-100vh) rotate(360deg);
-    }
-}
 /* Member List Indicator */
 .color-indicator {
     width: 10px;
@@ -2268,4 +2250,33 @@ select.form-input {
     height: 100%;
     width: 100%;
 } */
+</style>
+<!-- 第二个 <style> 块，没有 scoped，用于全局动画 -->
+<style> 
+/* 将动画定义和应用移到这里 */
+.triangle {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0.1; /* 或根据需要调整 */
+    will-change: transform; /* 动画性能优化提示 */
+    /* animation-name, timing, iteration 在这里指定 */
+    animation: float 20s infinite linear; 
+     /* z-index: 0; 不需要，因为父容器已经是 z-0 */
+}
+
+@keyframes float {
+    0% {
+        transform: translateY(0) rotate(0deg);
+        opacity: 0.1; /* 可以让它在开始时也透明 */
+    }
+    50% {
+         opacity: 0.15; /* 过程中稍微可见一点 */
+    }
+    100% {
+         /* 确保它移动到视图顶部之外 */
+        transform: translateY(calc(-100vh - 150px)) rotate(360deg); 
+        opacity: 0; /* 结束时完全透明 */
+    }
+}
 </style>
