@@ -1090,7 +1090,7 @@ onUnmounted(() => {
              <transition name="fade-in-up">
                  <div v-if="state.errorMessage && (!state.showConfirmModal && !state.showCreateModal && !state.showEditModal  && !state.showLoadingOverlay)" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
                      <!-- NOTE: This icon uses Lucide static URL - keeping as per original -->
-                     <img src="https://unpkg.com/lucide-static@latest/icons/alert-triangle.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
+                     <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                      <span class="break-words flex-grow">{{ state.errorMessage }}</span> <!-- Allow text to wrap -->
                     <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.errorMessage = null" aria-label="关闭错误消息">
                         <!-- NOTE: This icon uses hardcoded SVG path (likely Lucide source) - keeping as per original -->
@@ -1651,7 +1651,7 @@ onUnmounted(() => {
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10"> <!-- Ensure footer is above confetti -->
                 <!-- Use environment variable domain -->
-                 <p>© {{ new Date().getFullYear() }} NGU Team © {{ new Date().getFullYear() }} MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
+                 <p>{{ new Date().getFullYear() }} © NGU Team © MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p> <!-- Remove www. if present -->
             </div>
 
         </div> <!-- End of Container -->
