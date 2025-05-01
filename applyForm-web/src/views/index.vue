@@ -901,7 +901,7 @@ onUnmounted(() => {
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
                         <!-- You can use a relevant icon, e.g., trophy or calendar -->
-                        <img src="/logo.webp" class="w-12 h-12 text-white" alt="Event">
+                        <img src="/logo.webp" class="w-24 h-24 text-white" alt="NGU3rd Logo">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">{{ state.eventInfo.title }}</h1>
                     <p class="text-purple-300">活动报名入口</p>
