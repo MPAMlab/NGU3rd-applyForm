@@ -1,6 +1,5 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import QrcodeVue from 'qrcode.vue'; // Still useful for displaying team QR if needed, though not strictly required for admin list
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 
 // --- Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
