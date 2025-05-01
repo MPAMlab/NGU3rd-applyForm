@@ -899,9 +899,9 @@ onUnmounted(() => {
             <div id="step-entry" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 0">
                 <!-- Header -->
                 <div class="text-center mb-8">
-                     <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
+                     <div class="w-24 h-24 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
                         <!-- You can use a relevant icon, e.g., trophy or calendar -->
-                        <img src="https://unpkg.com/lucide-static@latest/icons/calendar-check.svg" class="w-12 h-12 text-white" alt="Event">
+                        <img src="/logo.webp" class="w-12 h-12 text-white" alt="Event">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">{{ state.eventInfo.title }}</h1>
                     <p class="text-purple-300">活动报名入口</p>

@@ -599,7 +599,7 @@ watch(adminApiKey, (newKey) => {
                      <h2 class="text-2xl font-bold">成员列表 ({{ state.members.length }})</h2>
                      <div class="flex space-x-3">
                          <button @click="openAddModal" class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/plus-circle.svg" class="w-4 h-4 mr-2" alt="Add">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/plus.svg" class="w-4 h-4 mr-2" alt="Add">
                              添加成员
                          </button>
                          <button @click="exportCsv" :disabled="state.isLoading" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center" :class="{'opacity-50 cursor-not-allowed': state.isLoading}">
