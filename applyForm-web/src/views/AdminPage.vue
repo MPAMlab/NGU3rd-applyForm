@@ -89,7 +89,7 @@ const isJobAvailableInTeam = computed(() => (job) => {
 
      // If editing, the current member's job doesn't count as "taken" by others
     if (state.isEditing && state.currentMember) {
-        const memberBeingEdited = membersInTeam.find(m => m.id === state.currentMember.id);
+        const memberBeingEdited = membersInCurrentTeam.find(m => m.id === state.currentMember.id);
         if (memberBeingEdited && memberBeingEdited.job === job) return true; // This is the member's current job
     }
 
