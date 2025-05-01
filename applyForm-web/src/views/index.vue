@@ -44,8 +44,8 @@ const state = reactive({
     eventInfo: {
         title: "NGU 3rd 音游娱乐赛",
         location: "翡尔堡家庭娱乐中心(郑州万象城三楼店)",
-        time: "2025年5月17日",
-        description: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque sollicitudin augue vel sem suscipit, id bibendum neque bibendum. Cras tempor non lacus ac vestibulum.",
+        time: "2025年5月18日",
+        description: "Never ever and ever... 具体规则以及如有变动，请留意群内公告。 官网链接：https://ngu3rd.mpam-lab.xyz",
         // rulesLink: "#"
     }
 });
