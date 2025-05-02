@@ -271,27 +271,6 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
     }
 }
 
-function logout(): void {
-    if (!kindeConfig.issuerUrl || !kindeConfig.logoutRedirectUri) {
-        console.error("Kinde logout configuration missing. Cannot initiate logout.");
-        alert("认证服务配置错误，请联系管理员。");
-        return;
-    }
-
-    console.log("Initiating Kinde logout...");
-
-    isAuthenticated.value = false;
-    kindeUser.value = null;
-    userMember.value = null;
-    Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
-    Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
-
-    const logoutUrl = new URL(`${kindeConfig.issuerUrl}/logout`);
-    logoutUrl.searchParams.append('redirect', kindeConfig.logoutRedirectUri);
-
-    window.location.href = logoutUrl.toString();
-}
-
 function getAccessToken(): string | undefined {
     return Cookies.get(ACCESS_TOKEN_COOKIE_NAME);
 }
