@@ -1,60 +1,61 @@
 <!-- views/index.vue -->
-<script setup lang="ts"> // Add lang="ts"
-import { ref, reactive, computed, onMounted, onUnmounted, watch, type Ref, type ComputedRef } from 'vue'; // Import types
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, onUnmounted, watch, type Ref, type ComputedRef } from 'vue';
 import QrcodeVue from 'qrcode.vue';
 // ADDED: Import Kinde auth composable
-import { useKindeAuth } from '../composables/useKindeAuth'; // No need for .ts extension here
+import { useKindeAuth } from '../composables/useKindeAuth'; // Ensure this path is correct
 
 // Import types from your types file
-import { Member, KindeUser } from '../types'; // Import types
+import { Member, KindeUser } from '../types'; // <--- Ensure this path is correct
 
 // --- Kinde Auth State and Methods ---
 const {
     isAuthenticated,
     kindeUser, // { id, email, name } or null
-    userMember, // Member object or null
+    userMember, // Member object or null (This is now READONLY from the composable)
     login, // Function to initiate login/register
     logout, // Function to initiate logout
     checkAuthStatus, // Function to check auth status and fetch userMember
     authenticatedFetch, // Wrapped fetch function
+    updateUserMember, // ADDED: Function to update userMember state via the composable
 } = useKindeAuth();
 
 // --- Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
-const websiteLink: Ref<string> = ref(import.meta.env.VITE_WEBSITE_LINK || 'http://localhost:5173'); // Add type annotation
+const websiteLink: Ref<string> = ref(import.meta.env.VITE_WEBSITE_LINK || 'http://localhost:5173');
 const MAX_AVATAR_SIZE_MB = 2;
 
 // --- State Management (Reactive) ---
-interface State { // Define interface for reactive state
+interface State {
     currentStep: number;
     teamCode: string | null;
     teamName: string | null;
     isNewTeam: boolean;
     newTeamName: string | null;
-    selectedColor: 'red' | 'green' | 'blue' | null; // Use union type
-    selectedJob: 'attacker' | 'defender' | 'supporter' | null; // Use union type
+    selectedColor: 'red' | 'green' | 'blue' | null;
+    selectedJob: 'attacker' | 'defender' | 'supporter' | null;
     maimaiId: string | null;
     nickname: string | null;
     qqNumber: string | null;
     privacyAgreed: boolean;
-    avatarFile: File | null; // Use File type
+    avatarFile: File | null;
     avatarPreviewUrl: string | null;
     showEditModal: boolean;
-    editMemberId: number | null; // Use number type for DB ID
+    editMemberId: number | null;
     editNewNickname: string | null;
     editNewQqNumber: string | null;
-    editNewColor: 'red' | 'green' | 'blue' | null; // Use union type
-    editNewJob: 'attacker' | 'defender' | 'supporter' | null; // Use union type
-    editNewAvatarFile: File | null; // Use File type
+    editNewColor: 'red' | 'green' | 'blue' | null;
+    editNewJob: 'attacker' | 'defender' | 'supporter' | null;
+    editNewAvatarFile: File | null;
     editNewAvatarPreviewUrl: string | null;
     editClearAvatarFlag: boolean;
     showConfirmModal: boolean;
     showCreateModal: boolean;
     showLoadingOverlay: boolean;
     errorMessage: string | null;
-    currentTeamMembers: Member[]; // Use Member type array
-    completionAllMembers: Member[]; // Use Member type array
-    confettiInterval: number | null; // Use number type for interval ID (assuming DOM lib is used)
+    currentTeamMembers: Member[];
+    completionAllMembers: Member[];
+    confettiInterval: number | null; // Explicitly number | null
 
     eventInfo: {
         title: string;
@@ -64,7 +65,7 @@ interface State { // Define interface for reactive state
     };
 }
 
-const state: State = reactive({ // Use State interface
+const state: State = reactive({
     currentStep: 0,
     teamCode: null,
     teamName: null,
@@ -110,9 +111,9 @@ const progressWidth = computed(() => {
     return `${progressSteps[actualStep]}%`;
 });
 
-const isColorDisabled = computed(() => (color: 'red' | 'green' | 'blue') => { // Add type annotation
+const isColorDisabled = computed(() => (color: 'red' | 'green' | 'blue') => {
      // If editing, the current color is allowed
-     if (state.showEditModal && state.editMemberId !== null) { // Check against null
+     if (state.showEditModal && state.editMemberId !== null) {
          const memberBeingEdited = state.currentTeamMembers.find(m => m.id === state.editMemberId);
          if (memberBeingEdited && memberBeingEdited.color === color) return false;
      }
@@ -120,9 +121,9 @@ const isColorDisabled = computed(() => (color: 'red' | 'green' | 'blue') => { //
     return state.currentTeamMembers.some(member => member.color === color);
 });
 
-const isJobDisabled = computed(() => (jobType: 'attacker' | 'defender' | 'supporter') => { // Add type annotation
+const isJobDisabled = computed(() => (jobType: 'attacker' | 'defender' | 'supporter') => {
      // If editing, the current job is allowed
-     if (state.showEditModal && state.editMemberId !== null) { // Check against null
+     if (state.showEditModal && state.editMemberId !== null) {
          const memberBeingEdited = state.currentTeamMembers.find(m => m.id === state.editMemberId);
          if (memberBeingEdited && memberBeingEdited.job === jobType) return false;
      }
@@ -138,16 +139,16 @@ const shareLinkUrl = computed(() => {
 });
 
 // ADDED: Computed property to check if the logged-in user has a member record
-const hasUserMember: ComputedRef<boolean> = computed(() => userMember.value !== null); // Add type annotation
+const hasUserMember: ComputedRef<boolean> = computed(() => userMember.value !== null);
 
 // ADDED: Computed property to get the logged-in user's member data if it exists
-const currentUserMember: ComputedRef<Member | null> = computed(() => userMember.value); // Add type annotation
+const currentUserMember: ComputedRef<Member | null> = computed(() => userMember.value);
 
 
 // --- Methods / Functions ---
 
-function showStep(stepNumber: number): void { // Add type annotation
-    if (state.currentStep === 5 && state.confettiInterval !== null) { // Check against null
+function showStep(stepNumber: number): void {
+    if (state.currentStep === 5 && state.confettiInterval !== null) {
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
         const celebrationDiv = document.getElementById('celebration');
@@ -167,7 +168,7 @@ function showStep(stepNumber: number): void { // Add type annotation
     }
 }
 
-async function handleContinue(): Promise<void> { // Add type annotation
+async function handleContinue(): Promise<void> {
     const code = state.teamCode ? state.teamCode.trim() : '';
     state.errorMessage = null;
 
@@ -198,7 +199,7 @@ async function handleContinue(): Promise<void> { // Add type annotation
             state.teamName = data.name;
             state.currentTeamMembers = data.members || [];
 
-            const userIsMember = isAuthenticated.value && kindeUser.value && state.currentTeamMembers.some(member => member.kinde_user_id === kindeUser.value?.id); // Check kindeUser.value
+            const userIsMember = isAuthenticated.value && kindeUser.value && state.currentTeamMembers.some(member => member.kinde_user_id === kindeUser.value?.id);
 
             if (isAuthenticated.value && hasUserMember.value && userIsMember) {
                  state.completionAllMembers = state.currentTeamMembers;
@@ -349,11 +350,7 @@ function handleAvatarChange(event: Event): void {
     state.errorMessage = null;
 
     if (!file) {
-        state.avatarFile = null;
-        if (state.avatarPreviewUrl) {
-            URL.revokeObjectURL(state.avatarPreviewUrl);
-        }
-        state.avatarPreviewUrl = null;
+        clearAvatarFile(); // Use the dedicated clear function
         return;
     }
 
@@ -380,6 +377,19 @@ function handleAvatarChange(event: Event): void {
     state.avatarPreviewUrl = URL.createObjectURL(file);
     console.log("Avatar file selected:", file.name, "Preview URL:", state.avatarPreviewUrl);
 }
+
+// ADDED: Dedicated function to clear avatar file state
+function clearAvatarFile(): void {
+    state.avatarFile = null;
+    if (state.avatarPreviewUrl) {
+        URL.revokeObjectURL(state.avatarPreviewUrl);
+    }
+    state.avatarPreviewUrl = null;
+     const avatarInput = document.getElementById('avatar-upload') as HTMLInputElement | null;
+     if(avatarInput) avatarInput.value = ''; // Clear file input value
+     console.log("Avatar file state cleared.");
+}
+
 
 async function handleSubmitPersonalInfo(): Promise<void> {
     state.errorMessage = null;
@@ -446,10 +456,12 @@ async function handleSubmitPersonalInfo(): Promise<void> {
         console.log("Successfully joined team. Data:", data);
 
         if (data.member) {
-             userMember.value = data.member as Member;
+             // MODIFIED: Use the composable's update function
+             updateUserMember(data.member as Member);
              state.currentTeamMembers.push(data.member as Member);
              state.completionAllMembers = state.currentTeamMembers;
         } else {
+             // MODIFIED: Rely on checkAuthStatus to update userMember
              await checkAuthStatus();
              await fetchTeamMembers(state.teamCode!);
              state.completionAllMembers = state.currentTeamMembers;
@@ -682,18 +694,7 @@ function handleEditAvatarChange(event: Event): void {
     const file = target.files?.[0] || null;
     state.errorMessage = null;
     if (!file) {
-        state.editNewAvatarFile = null;
-         if (currentUserMember.value?.avatar_url) {
-             state.editNewAvatarPreviewUrl = currentUserMember.value.avatar_url;
-         } else if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
-            URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-            state.editNewAvatarPreviewUrl = null;
-         } else {
-             state.editNewAvatarPreviewUrl = null;
-         }
-        state.editClearAvatarFlag = false;
-         const editAvatarInput = document.getElementById('edit-avatar-upload') as HTMLInputElement | null;
-         if(editAvatarInput) editAvatarInput.value = '';
+        clearEditAvatarFile(); // Use the dedicated clear function
         return;
     }
     const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
@@ -719,17 +720,36 @@ function handleEditAvatarChange(event: Event): void {
      state.editClearAvatarFlag = false;
 }
 
-function removeEditAvatar(): void {
+// ADDED: Dedicated function to clear edit avatar file state
+function clearEditAvatarFile(): void {
     state.editNewAvatarFile = null;
+     if (currentUserMember.value?.avatar_url) {
+         state.editNewAvatarPreviewUrl = currentUserMember.value.avatar_url; // Revert to current avatar if exists
+     } else if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
+        state.editNewAvatarPreviewUrl = null;
+     } else {
+         state.editNewAvatarPreviewUrl = null;
+     }
+    state.editClearAvatarFlag = false; // Clearing the *new* file doesn't mean clearing the *existing* one
+     const editAvatarInput = document.getElementById('edit-avatar-upload') as HTMLInputElement | null;
+     if(editAvatarInput) editAvatarInput.value = ''; // Clear file input value
+     console.log("Edit modal: New avatar file state cleared.");
+}
+
+// MODIFIED: Function to remove the *existing* avatar
+function removeEditAvatar(): void {
+    state.editNewAvatarFile = null; // Clear any newly selected file
     if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
     }
-    state.editNewAvatarPreviewUrl = null;
+    state.editNewAvatarPreviewUrl = null; // Clear the preview
      const editAvatarInput = document.getElementById('edit-avatar-upload') as HTMLInputElement | null;
-     if(editAvatarInput) editAvatarInput.value = '';
-     state.editClearAvatarFlag = true;
-     console.log("Edit modal: Selected new avatar file removed, clear flag set.");
+     if(editAvatarInput) editAvatarInput.value = ''; // Clear file input value
+     state.editClearAvatarFlag = true; // Set flag to tell backend to remove existing avatar
+     console.log("Edit modal: Existing avatar marked for removal.");
 }
+
 
 async function saveChanges(): Promise<void> {
     state.errorMessage = null;
@@ -747,34 +767,44 @@ async function saveChanges(): Promise<void> {
           state.errorMessage = '新称呼长度需在1到50个字符之间。';
           return;
       }
-     // MODIFIED: Check against null, not empty string
      if (state.editNewColor !== null && !['red', 'green', 'blue'].includes(state.editNewColor)) {
          state.errorMessage = '无效的新颜色选择。';
          return;
      }
-     // MODIFIED: Check against null, not empty string
      if (state.editNewJob !== null && !['attacker', 'defender', 'supporter'].includes(state.editNewJob)) {
          state.errorMessage = '无效的新职业选择。';
          return;
      }
 
+    // Check if any changes were actually made
+    const originalMember = currentUserMember.value;
+    const isNicknameChanged = state.editNewNickname !== null && state.editNewNickname.trim() !== '' && state.editNewNickname.trim() !== originalMember.nickname;
+    const isQqChanged = state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '' && state.editNewQqNumber.trim() !== originalMember.qq_number;
+    const isColorChanged = state.editNewColor !== null && state.editNewColor !== originalMember.color;
+    const isJobChanged = state.editNewJob !== null && state.editNewJob !== originalMember.job;
+    const isAvatarChanged = state.editNewAvatarFile !== null || state.editClearAvatarFlag;
+
+    if (!isNicknameChanged && !isQqChanged && !isColorChanged && !isJobChanged && !isAvatarChanged) {
+        state.errorMessage = '没有检测到任何修改。';
+        setTimeout(() => { state.errorMessage = null; }, 2000);
+        return;
+    }
+
 
     state.showLoadingOverlay = true;
     try {
         const formData = new FormData();
-         if (state.editNewNickname !== null && state.editNewNickname.trim() !== '' && state.editNewNickname.trim() !== currentUserMember.value.nickname) {
-             formData.append('nickname', state.editNewNickname.trim());
+         if (isNicknameChanged) {
+             formData.append('nickname', state.editNewNickname!.trim());
          }
-         if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '' && state.editNewQqNumber.trim() !== currentUserMember.value.qq_number) {
-             formData.append('qqNumber', state.editNewQqNumber.trim());
+         if (isQqChanged) {
+             formData.append('qqNumber', state.editNewQqNumber!.trim());
          }
-         // MODIFIED: Append only if not null AND different from current
-         if (state.editNewColor !== null && state.editNewColor !== currentUserMember.value.color) {
-             formData.append('color', state.editNewColor);
+         if (isColorChanged) {
+             formData.append('color', state.editNewColor!);
          }
-         // MODIFIED: Append only if not null AND different from current
-         if (state.editNewJob !== null && state.editNewJob !== currentUserMember.value.job) {
-             formData.append('job', state.editNewJob);
+         if (isJobChanged) {
+             formData.append('job', state.editNewJob!);
          }
 
         if (state.editNewAvatarFile) {
@@ -785,7 +815,7 @@ async function saveChanges(): Promise<void> {
             formData.append('clearAvatar', 'true');
              console.log("Appending clearAvatar=true for update.");
          } else {
-             formData.append('clearAvatar', 'false');
+             formData.append('clearAvatar', 'false'); // Explicitly send false if no avatar change
          }
 
         const targetMaimaiId = currentUserMember.value.maimai_id;
@@ -813,7 +843,8 @@ async function saveChanges(): Promise<void> {
         state.errorMessage = '信息更新成功！';
 
          if (data.member) {
-             userMember.value = data.member as Member;
+             // MODIFIED: Use the composable's update function
+             updateUserMember(data.member as Member);
              const updatedMaimaiId = (data.member as Member).maimai_id?.toString();
              if (updatedMaimaiId) {
                  const updateList = (list: Member[]) => {
@@ -830,6 +861,7 @@ async function saveChanges(): Promise<void> {
              }
          } else {
               console.warn("PATCH success response did not include an updated member object.");
+              // MODIFIED: Rely on checkAuthStatus to update userMember
               await checkAuthStatus();
               await fetchTeamMembers(state.teamCode!);
               state.completionAllMembers = state.currentTeamMembers;
@@ -873,7 +905,8 @@ async function deleteEntry(): Promise<void> {
              console.log('Deletion successful (received 204 No Content).');
              state.errorMessage = '报名信息已成功删除！';
 
-             userMember.value = null;
+             // MODIFIED: Use the composable's update function
+             updateUserMember(null);
 
              const deletedMaimaiId = targetMaimaiId;
              state.completionAllMembers = state.completionAllMembers.filter(
@@ -908,7 +941,8 @@ async function deleteEntry(): Promise<void> {
              const data = await response.json();
               console.log('Deletion successful (unexpected 2xx):', data);
                state.errorMessage = '报名信息已成功删除！';
-               userMember.value = null;
+               // MODIFIED: Use the composable's update function
+               updateUserMember(null);
                const deletedMaimaiId = targetMaimaiId;
                state.completionAllMembers = state.completionAllMembers.filter(
                     member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
@@ -1013,7 +1047,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-    if (state.confettiInterval !== null) { // Check against null
+    if (state.confettiInterval !== null) {
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
          const celebrationDiv = document.getElementById('celebration');
@@ -1033,6 +1067,7 @@ onUnmounted(() => {
 
 watch(userMember, (newValue, oldValue) => {
     console.log("userMember state changed:", oldValue, "->", newValue);
+    // MODIFIED: Check if oldValue was not null and newValue is null
     if (oldValue !== null && newValue === null && state.currentStep === 5) {
         console.log("User member deleted, redirecting from completion page.");
         goHome();
@@ -1171,7 +1206,7 @@ watch(userMember, (newValue, oldValue) => {
                 </button>
             </div>
 
-            <!-- ADDED: Step 2: Login/Register Prompt -->
+            <!-- Step 2: Login/Register Prompt -->
             <div id="step-auth-prompt" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 2">
                  <!-- Header -->
                  <div class="text-center mb-8">
@@ -1496,7 +1531,8 @@ watch(userMember, (newValue, oldValue) => {
                             <!-- Hidden file input -->
                             <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
 
-                            <button v-if="state.avatarFile" type="button" @click="handleAvatarChange({ target: { files: [] } } as Event)" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
+                            <!-- MODIFIED: Use dedicated clear function -->
+                            <button v-if="state.avatarFile" type="button" @click="clearAvatarFile()" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
                         </div>
                     </div>
 
@@ -1697,8 +1733,6 @@ watch(userMember, (newValue, oldValue) => {
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10">
                  <p>{{ new Date().getFullYear() }} © NGU Team © MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p>
             </div>
-            
-        </div> <!-- End of Container -->
 
         <!-- Modals -->
         <!-- Confirm Join Modal -->
@@ -1919,6 +1953,8 @@ watch(userMember, (newValue, oldValue) => {
 
          <!-- Confetti Layer -->
          <div id="celebration" class="fixed inset-0 pointer-events-none z-40"></div>
+
+    </div> <!-- End of Root container -->
 </template>
 
 <style scoped>
