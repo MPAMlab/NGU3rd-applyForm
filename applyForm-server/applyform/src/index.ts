@@ -312,24 +312,6 @@ async function handleKindeCallback(request: Request, env: Env, ctx: ExecutionCon
     }
 }
 
-// POST /api/auth/logout (Optional backend step to clear cookies)
-async function handleLogout(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const headers = new Headers(CORS_HEADERS);
-    const secure = url.protocol === 'https:' ? '; Secure' : '';
-    const domain = url.hostname; // Or specific domain
-
-    // Set Max-Age to 0 or a past date to delete cookies
-    headers.append('Set-Cookie', `kinde_access_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secure}; Domain=${domain}`);
-    headers.append('Set-Cookie', `kinde_refresh_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secure}; Domain=${domain}`);
-
-    return new Response(JSON.stringify({ success: true, message: "Logged out successfully." }), {
-        status: 200,
-        headers: headers,
-    });
-}
-
-
 // POST /api/teams/check (No auth needed)
 async function handleCheckTeam(request: Request, env: Env): Promise<Response> {
     const body = await request.json().catch(() => null);
@@ -1199,6 +1181,54 @@ async function handleAdminExportCsv(request: Request, env: Env): Promise<Respons
     }
 }
 
+async function handleLogout(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    console.log('Handling /api/logout request...');
+    const url = new URL(request.url);
+
+    // --- Configuration Check ---
+    const kindeIssuerUrl = env.KINDE_ISSUER_URL;
+
+    // *** MODIFIED: Use the specific secret you just set ***
+    // This URL MUST be listed in your Kinde application's "Allowed logout redirect URIs"
+    const logoutRedirectTargetUrl = env.LOGOUT_REDIRECT_TARGET_URL; // Use the new secret name
+
+    if (!kindeIssuerUrl) {
+        console.error('KINDE_ISSUER_URL is not configured.');
+        return apiError('Logout service configuration error.', 500);
+    }
+    // *** ADDED: Check if the new secret is set ***
+    if (!logoutRedirectTargetUrl) {
+        console.error('LOGOUT_REDIRECT_TARGET_URL secret is not set. Cannot determine Kinde logout redirect target.');
+        // It's safer to return an error than to guess a redirect URL that might not be allowed by Kinde.
+        return apiError('Logout configuration error: Target URL not set in secrets.', 500);
+    }
+
+    console.log(`Using Kinde logout redirect URI: ${logoutRedirectTargetUrl}`);
+
+    // --- Construct Kinde Logout URL ---
+    const kindeLogoutUrl = new URL(`${kindeIssuerUrl}/logout`);
+    // *** Use the value from the secret ***
+    kindeLogoutUrl.searchParams.append('redirect', logoutRedirectTargetUrl);
+    console.log('Calculated Kinde logout URL:', kindeLogoutUrl.toString());
+
+    // --- Prepare Headers for Deleting Cookies ---
+    const headers = new Headers();
+    Object.entries(CORS_HEADERS).forEach(([key, value]) => headers.set(key, value));
+    const secureFlag = url.protocol === 'https:' ? '; Secure' : '';
+    const domain = url.hostname;
+    headers.append('Set-Cookie', `kinde_access_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
+    headers.append('Set-Cookie', `kinde_refresh_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
+    console.log('Set-Cookie headers prepared for deletion.');
+
+    // --- Return Redirect Response ---
+    return new Response(null, {
+        status: 302, // Found (Redirect)
+        headers: {
+            ...Object.fromEntries(headers.entries()),
+            'Location': kindeLogoutUrl.toString(),
+        }
+    });
+}
 
 // --- Main Worker Fetch Handler ---
 
@@ -1207,9 +1237,12 @@ export default {
 
         // --- 1. Handle CORS Preflight Request (OPTIONS) ---
         if (request.method === 'OPTIONS') {
+            // Ensure Allow-Credentials header is included in OPTIONS response if needed
+            const headers = new Headers(CORS_HEADERS);
+            // headers.set('Access-Control-Allow-Credentials', 'true'); // Already included in CORS_HEADERS constant
             return new Response(null, {
                 status: 204,
-                headers: CORS_HEADERS
+                headers: headers
             });
         }
 
@@ -1219,37 +1252,29 @@ export default {
         console.log(`[Request] ${method} ${pathname}`);
 
         // --- 2. Admin Endpoint Authentication Check (API Key) ---
-        // Apply this check *before* Kinde auth, as admin uses a different method
         if (pathname.startsWith('/api/admin/')) {
             if (!isAdminAuthenticated(request, env)) {
                 return apiError('Authentication failed.', 401);
             }
-            // If authenticated, proceed to admin route handlers
         }
-        // --- End Admin Auth Check ---
-
 
         try {
             // --- 3. Kinde Authentication Middleware for User Routes ---
             const protectedUserPaths = [
                 '/api/teams/join',
-                '/api/members/', // User edit/delete starts with this
-                '/api/members/me', // New endpoint
+                '/api/members/', // Covers PATCH and DELETE by maimaiId
+                '/api/members/me',
             ];
-
-            const isProtectedUserRoute = protectedUserPaths.some(p => pathname.startsWith(p));
+            // Exclude logout from this check
+            const isProtectedUserRoute = protectedUserPaths.some(p => pathname.startsWith(p)) && pathname !== '/api/logout'; // Exclude logout
 
             let kindeUserId: string | null = null;
             if (isProtectedUserRoute) {
                  kindeUserId = await getAuthenticatedKindeUser(request, env);
                  if (!kindeUserId) {
-                     // Return 401 if no token/invalid token for protected user routes
                      return apiError('Authentication required.', 401);
                  }
-                 // kindeUserId is now available for the user route handlers below
              }
-            // --- End Kinde Authentication Middleware ---
-
 
             // --- 4. Routing Logic ---
 
@@ -1258,10 +1283,11 @@ export default {
                 return handleKindeCallback(request, env, ctx);
             }
 
-            // Kinde Logout Endpoint (Optional backend step)
-            else if (method === 'POST' && pathname === '/api/auth/logout') {
-                 return handleLogout(request, env);
+            // *** ADDED: Logout Route ***
+            else if (method === 'POST' && pathname === '/api/logout') {
+                 return handleLogout(request, env, ctx);
             }
+            // *** END ADDED: Logout Route ***
 
             // Public Team Check
             else if (method === 'POST' && pathname === '/api/teams/check') {
@@ -1275,26 +1301,26 @@ export default {
 
             // User Join Team (Requires Kinde Auth)
             else if (method === 'POST' && pathname === '/api/teams/join') {
-                 // kindeUserId is guaranteed to be non-null here by the middleware
-                 return handleJoinTeam(request, env, kindeUserId!, ctx); // Use non-null assertion as middleware checked
+                 if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check just in case
+                 return handleJoinTeam(request, env, kindeUserId, ctx);
             }
 
             // User Patch Member (Requires Kinde Auth)
             else if (method === 'PATCH' && pathname.startsWith('/api/members/')) {
-                 // kindeUserId is guaranteed to be non-null here by the middleware
-                 return handleUserPatchMember(request, env, kindeUserId!, ctx); // Use non-null assertion
+                 if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check
+                 return handleUserPatchMember(request, env, kindeUserId, ctx);
             }
 
            // User Delete Member (Requires Kinde Auth)
            else if (method === 'DELETE' && pathname.startsWith('/api/members/')) {
-               // kindeUserId is guaranteed to be non-null here by the middleware
-               return handleUserDeleteMember(request, env, kindeUserId!, ctx); // Use non-null assertion
+               if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check
+               return handleUserDeleteMember(request, env, kindeUserId, ctx);
            }
 
            // Fetch Current User's Member Info (Requires Kinde Auth)
            else if (method === 'GET' && pathname === '/api/members/me') {
-               // kindeUserId is guaranteed to be non-null here by the middleware
-               return handleFetchMe(request, env, kindeUserId!); // Use non-null assertion
+               if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check
+               return handleFetchMe(request, env, kindeUserId);
            }
 
            // Public Get Team by Code
@@ -1303,28 +1329,19 @@ export default {
            }
 
            // --- Admin Endpoints (Admin Auth already checked) ---
-
-           // Admin Fetch All Members
+           // ... (Keep existing admin route conditions) ...
            else if (method === 'GET' && pathname === '/api/admin/members') {
                return handleAdminFetchMembers(request, env);
            }
-
-           // Admin Add Member
            else if (method === 'POST' && pathname === '/api/admin/members') {
                return handleAdminAddMember(request, env, ctx);
            }
-
-           // Admin Patch Member
            else if (method === 'PATCH' && pathname.startsWith('/api/admin/members/')) {
                return handleAdminPatchMember(request, env, ctx);
            }
-
-           // Admin Delete Member
            else if (method === 'DELETE' && pathname.startsWith('/api/admin/members/')) {
                return handleAdminDeleteMember(request, env, ctx);
            }
-
-           // Admin Export CSV
            else if (method === 'GET' && pathname === '/api/admin/export/csv') {
                return handleAdminExportCsv(request, env);
            }
@@ -1332,11 +1349,10 @@ export default {
 
            // --- 5. 404 Catch All ---
            else {
-               // If no route matched
                return apiError('Endpoint not found.', 404);
            }
 
-       } catch (globalError) { // Catch any unexpected errors not handled by specific routes
+       } catch (globalError) {
            console.error('Unhandled exception in Worker:', globalError);
            return apiError(
                'An unexpected internal server error occurred.',
@@ -1346,18 +1362,3 @@ export default {
        }
    },
 };
-
-// Optional: Define a basic Member type if you prefer type safety over 'any'
-// interface Member {
-//     id: number;
-//     team_code: string;
-//     color: string;
-//     job: string;
-//     maimai_id: string;
-//     nickname: string;
-//     qq_number: string;
-//     avatar_url: string | null;
-//     joined_at: number;
-//     updated_at: number;
-//     kinde_user_id: string | null;
-// }

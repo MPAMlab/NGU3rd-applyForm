@@ -324,6 +324,56 @@ function updateUserMember(member: Member | null): void {
     userMember.value = member;
 }
 
+async function logout(): Promise<void> {
+    console.log("Initiating logout via backend...");
+
+    // Clear frontend state immediately for responsiveness
+    isAuthenticated.value = false;
+    kindeUser.value = null;
+    userMember.value = null;
+    // Clear non-HttpOnly cookies (best effort)
+    Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
+    Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
+    // Clear PKCE/state from localStorage if they somehow linger
+    localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
+    localStorage.removeItem(STATE_STORAGE_KEY);
+    // Clear any stored context
+    // (Need a way to find the key without the state value, maybe iterate or use a known key if only one context is stored)
+    // Or simply ignore clearing context here, it will be cleaned up on next login state generation.
+
+    try {
+        // Call the backend logout endpoint
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/logout`, {
+            method: 'POST', // Or GET, depending on your backend implementation
+            mode: 'cors',
+            // No body needed usually, backend identifies user via cookie
+        });
+
+        // The backend should respond with a redirect (302) to Kinde's logout URL.
+        // The browser will follow this redirect automatically.
+        // If the backend doesn't redirect (e.g., returns 200 OK),
+        // we might need to manually redirect here based on the response.
+        // But the preferred way is backend redirect.
+
+        if (response.ok || response.redirected) {
+             console.log("Backend logout initiated successfully. Browser should redirect.");
+             // Browser handles the redirect sent by the backend.
+             // If backend returns OK instead of redirect, uncomment below:
+             // window.location.href = kindeConfig.logoutRedirectUri; // Fallback redirect
+        } else {
+             console.error("Backend logout call failed:", response.status, await response.text());
+             // Even if backend fails, attempt Kinde logout directly as fallback? Or show error?
+             // For now, let's assume the frontend state clear is enough for user feedback
+             alert("退出登录时遇到问题，请稍后再试或手动清除 Cookie。");
+        }
+
+    } catch (e) {
+        console.error("Error calling backend logout:", e);
+        alert("退出登录时连接服务器失败。");
+        // Fallback redirect?
+        // window.location.href = kindeConfig.logoutRedirectUri;
+    }
+}
 interface UseKindeAuthReturn {
     isAuthenticated: Readonly<Ref<boolean>>;
     kindeUser: Readonly<Ref<KindeUser | null>>;

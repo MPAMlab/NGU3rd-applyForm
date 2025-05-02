@@ -1135,23 +1135,22 @@ onUnmounted(() => {
 
 watch(userMember, (newValue, oldValue) => {
     console.log("userMember state changed:", oldValue, "->", newValue);
-    // If userMember was not null and becomes null (e.g., after deletion)
+    // If userMember was not null and becomes null (e.g., after deletion OR logout)
     if (oldValue !== null && newValue === null) {
-        console.log("User member deleted or logged out, redirecting home.");
-        // Only redirect if we are currently on the completion step (step 5)
-        // or potentially any step that requires a registered user.
-        // Let's redirect from step 5 specifically, as that's where delete is triggered.
+        // Check if we are on the completion step (likely after deletion)
         if (state.currentStep === 6) {
-             goHome(); // Go back to the initial state/page
-             state.errorMessage = '你的报名信息已删除。'; // Optional: show a message
+            console.log("User member became null while on step 6. Going home.");
+            goHome();
+            // REMOVED: state.errorMessage = '你的报名信息已删除。';
         } else {
-             // If deleted from edit modal on another step, just update state and close modal
-             closeEditModal();
-             state.errorMessage = '你的报名信息已删除。';
-             // Re-fetch team members to update the list display on the current step
-             if (state.teamCode) {
-                 fetchTeamMembers(state.teamCode);
-             }
+            // If deleted from edit modal on another step, just update state and close modal
+            console.log("User member became null while NOT on step 6 (likely logout or deletion via modal).");
+            closeEditModal(); // Close modal if open
+            // REMOVED: state.errorMessage = '你的报名信息已删除。';
+            // Re-fetch team members if a team code is present
+            if (state.teamCode) {
+                fetchTeamMembers(state.teamCode);
+            }
         }
     }
     // If userMember becomes non-null while on step 1 (team code) or 2 (auth prompt),
@@ -1678,7 +1677,7 @@ watch(userMember, (newValue, oldValue) => {
                 <!-- Success Message -->
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 bg-gradient-to-br from-green-500 to-teal-500 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/check-circle.svg" class="w-12 h-12 text-white" alt="Success">
+                        <img src="https://unpkg.com/lucide-static@latest/icons/circle-check.svg" class="w-12 h-12 text-white" alt="Success">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">注册成功！</h1>
                     <p class="text-teal-300">你已成功加入“<span class="font-bold">{{ state.teamName || '队伍' }}</span>”</p>
