@@ -2,10 +2,10 @@
 import { ref, readonly, Ref, ComputedRef } from 'vue';
 import Cookies from 'js-cookie';
 import CryptoJS from 'crypto-js';
-import { Buffer } from 'buffer';
+// import { Buffer } from 'buffer'; // Buffer is not needed for base64urlencodeUint8Array
 
 // Import types from your types file
-import { Member, KindeUser } from '../types'; // <--- Ensure this path is correct
+import { Member, KindeUser } from '../types';
 
 // --- Kinde Configuration (Get from Environment Variables) ---
 const kindeConfig = {
@@ -31,23 +31,51 @@ const REFRESH_TOKEN_COOKIE_NAME = 'kinde_refresh_token';
 
 // --- Helper Functions for PKCE ---
 
-function generateRandomString(length: number): string {
-    const array = new Uint8Array(length);
-    window.crypto.getRandomValues(array);
-    return Array.from(array, byte => String.fromCharCode(byte)).join('');
+// MODIFIED: Generate random bytes and base64url encode them
+// Use byteLength to control the randomness source size
+function generateRandomString(byteLength: number): string {
+    const randomBytes = new Uint8Array(byteLength);
+    window.crypto.getRandomValues(randomBytes);
+    return base64urlencodeUint8Array(randomBytes);
 }
 
-function base64urlencode(buffer: ArrayBuffer): string {
-    const base64 = Buffer.from(buffer).toString('base64');
+// ADDED: Helper to base64url encode a Uint8Array
+function base64urlencodeUint8Array(bytes: Uint8Array): string {
+    // Convert Uint8Array to a binary string
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    // Base64 encode the binary string
+    const base64 = window.btoa(binary);
+    // Convert base64 to base64url
     return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+
+// This function seems correct, it uses the base64urlencode helper
 async function generateCodeChallenge(codeVerifier: string): Promise<string> {
     const encoder = new TextEncoder();
     const data = encoder.encode(codeVerifier);
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-    return base64urlencode(hashBuffer);
+    // Ensure this base64urlencode is the one that handles ArrayBuffer correctly
+    // Re-adding a browser-compatible base64urlencode for ArrayBuffer
+     return base64urlencodeArrayBuffer(hashBuffer);
 }
+
+// ADDED: Helper to base64url encode an ArrayBuffer (for the challenge)
+function base64urlencodeArrayBuffer(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = window.btoa(binary);
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 
 // --- Core Authentication Logic ---
 
@@ -195,9 +223,11 @@ async function login(prompt: 'login' | 'create' = 'login'): Promise<void> {
     }
 
     try {
-        const codeVerifier = generateRandomString(128);
+        // MODIFIED: Generate 96 bytes for the verifier, which results in a 128-character base64url string
+        const codeVerifier = generateRandomString(96); // 96 bytes -> 128 char base64url string
         const codeChallenge = await generateCodeChallenge(codeVerifier);
 
+        // State can be random bytes, base64url encode is fine
         const state = generateRandomString(32);
 
         localStorage.setItem(PKCE_VERIFIER_STORAGE_KEY, codeVerifier);
@@ -259,8 +289,8 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
             },
             body: JSON.stringify({
                 code: code,
-                code_verifier: storedVerifier,
-                redirect_uri: kindeConfig.redirectUri,
+                code_verifier: storedVerifier, // Send the stored verifier to the backend
+                redirect_uri: kindeConfig.redirectUri, // Send the redirect_uri to the backend
             }),
         });
 
@@ -268,6 +298,7 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
 
         if (!response.ok) {
             console.error('Backend token exchange failed:', response.status, data);
+            // MODIFIED: Return the actual error from the backend
             return { success: false, error: data.error || `Failed to exchange code for tokens (${response.status})` };
         }
 
@@ -316,15 +347,13 @@ function getAccessToken(): string | undefined {
 
 async function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
     const token = getAccessToken();
-    // MODIFIED: Ensure headers is a mutable object before adding Authorization
+    // Ensure headers is a mutable object before adding Authorization
     const headers: Record<string, string> = {
         ...(options.headers as Record<string, string> || {}), // Cast existing headers or use empty object
     };
 
     if (token) {
-        // MODIFIED: Use dot notation or bracket notation with string literal
-        headers['Authorization'] = `Bearer ${token}`; // This is fine with Record<string, string>
-        // Or: headers.Authorization = `Bearer ${token}`; // Also fine
+        headers['Authorization'] = `Bearer ${token}`;
     } else {
         console.warn(`Attempted to fetch ${url} without an access token.`);
         // The backend will return 401, which is handled below
