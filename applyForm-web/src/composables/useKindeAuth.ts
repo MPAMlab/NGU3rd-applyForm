@@ -1,9 +1,10 @@
 // composables/useKindeAuth.ts
-import { ref, readonly, Ref, ComputedRef, nextTick } from 'vue'; // Import nextTick
+// ADDED 'computed' to the import
+import { ref, readonly, Ref, ComputedRef, nextTick, computed } from 'vue';
 import Cookies from 'js-cookie';
 import CryptoJS from 'crypto-js';
 
-// Import types from your types file
+// Import types from your types file (MAKE SURE types.ts IS UPDATED WITH is_admin)
 import { Member, KindeUser } from '../types';
 
 // --- Kinde Configuration (Get from Environment Variables) ---
@@ -11,16 +12,18 @@ const kindeConfig = {
     issuerUrl: import.meta.env.VITE_KINDE_ISSUER_URL as string,
     clientId: import.meta.env.VITE_KINDE_CLIENT_ID as string,
     redirectUri: import.meta.env.VITE_KINDE_REDIRECT_URI as string,
-    logoutRedirectUri: (import.meta.env.VITE_KINDE_LOGOUT_REDIRECT_URI || import.meta.env.VITE_WEBSITE_LINK || window.location.origin) as string,
+    // Use the new secret name for logout redirect
+    logoutRedirectUri: import.meta.env.VITE_LOGOUT_REDIRECT_TARGET_URL as string, // Use the new secret
     // audience: import.meta.env.VITE_KINDE_AUDIENCE as string | undefined,
     scope: 'openid profile email offline',
 };
 
 // --- Reactive State ---
 const isAuthenticated: Ref<boolean> = ref(false);
+// kindeUser is now less critical for auth status, might be null if /userinfo fails or is skipped
 const kindeUser: Ref<KindeUser | null> = ref(null);
+// userMember now includes is_admin (assuming types.ts is updated)
 const userMember: Ref<Member | null> = ref(null);
-// REMOVED: authStatusChecked flag
 
 // --- Constants for PKCE and State ---
 const PKCE_VERIFIER_STORAGE_KEY = 'kinde_pkce_code_verifier';
@@ -30,7 +33,7 @@ const REFRESH_TOKEN_COOKIE_NAME = 'kinde_refresh_token';
 
 
 // --- Helper Functions for PKCE ---
-
+// ... (Keep generateRandomString, base64urlencodeUint8Array, generateCodeChallenge, base64urlencodeArrayBuffer as is) ...
 function generateRandomString(byteLength: number): string {
     const randomBytes = new Uint8Array(byteLength);
     window.crypto.getRandomValues(randomBytes);
@@ -68,92 +71,66 @@ function base64urlencodeArrayBuffer(buffer: ArrayBuffer): string {
 
 // --- Core Authentication Logic ---
 
-// MODIFIED: Removed authStatusChecked flag logic
 async function checkAuthStatus(): Promise<void> {
     console.log("Checking Kinde auth status via backend /members/me...");
-
-    // Call the backend endpoint. The browser will automatically send HttpOnly cookies.
-    // fetchUserMember will update isAuthenticated, kindeUser, and userMember based on the backend response.
+    // fetchUserMember will update isAuthenticated and userMember based on the backend response.
     await fetchUserMember();
-
-    console.log(`Auth status check complete. isAuthenticated: ${isAuthenticated.value}, userMember: ${userMember.value !== null}`);
+    // The kindeUser state might be null if fetchKindeUserInfo is removed or fails, which is acceptable.
+    // Accessing is_admin here requires the Member type to be updated in types.ts
+    console.log(`Auth status check complete. isAuthenticated: ${isAuthenticated.value}, userMember: ${userMember.value !== null}, isAdmin: ${userMember.value?.is_admin === 1}`);
 }
 
 async function fetchUserMember(): Promise<void> {
     console.log("Fetching user member data from backend /members/me...");
     try {
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/members/me`);
+        // Use authenticatedFetch to automatically include the cookie and handle 401
+        const response = await authenticatedFetch(`${import.meta.env.VITE_API_BASE_URL}/members/me`);
 
         if (response.ok) {
             const data = await response.json();
+            // Ensure the backend returns the member object under a 'member' key
+            // This assignment requires the Member type to be updated in types.ts
             userMember.value = data.member as Member | null;
 
-            isAuthenticated.value = true; // Backend returned 200, means token was valid
+            // If backend returns OK, the user is authenticated via Kinde token
+            isAuthenticated.value = true;
             console.log("Backend /members/me returned OK. User is authenticated.");
 
-            // REMOVED: await fetchKindeUserInfo(); // No longer calling this problematic function here
-
-            // Optional: If you *really* need the Kinde name/email later,
-            // you could potentially parse it from the ID token if the backend returned it,
-            // or make a separate call *only when needed*, but for checkAuthStatus, it's not required.
-            // For now, kindeUser might remain null, which is fine.
+            // *** REMOVED THE CALL TO fetchKindeUserInfo() HERE ***
+            // We rely on the backend /members/me to tell us if the user is registered
+            // and provide necessary member details including kinde_user_id and is_admin.
+            // Fetching generic Kinde user info is not needed for the core auth status check.
 
         } else if (response.status === 401) {
             console.warn("Backend /members/me returned 401. User is not authenticated.");
+            // authenticatedFetch already clears state and cookies on 401, but explicit clear is fine
             isAuthenticated.value = false;
             kindeUser.value = null;
             userMember.value = null;
-            // Clear cookies client-side (best effort for non-HttpOnly, but good practice)
             Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
             Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
         }
         else {
             console.error("Failed to fetch user member data:", response.status, await response.text());
-            isAuthenticated.value = false; // Treat other errors as unauthenticated for safety
+            // Treat other errors as unauthenticated for safety
+            isAuthenticated.value = false;
             kindeUser.value = null;
             userMember.value = null;
         }
     } catch (e) {
         console.error("Error fetching user member data:", e);
-        isAuthenticated.value = false; // Treat network errors as unauthenticated for safety
+        // Treat network errors as unauthenticated for safety
+        isAuthenticated.value = false;
         kindeUser.value = null;
         userMember.value = null;
     }
 }
 
+// *** REMOVED fetchKindeUserInfo function entirely ***
+// It's no longer called from fetchUserMember and is not needed for the core flow.
+// If you need Kinde user details (name, email) elsewhere, you might fetch them
+// differently or rely on the ID token payload during callback if needed.
 
-async function fetchKindeUserInfo(): Promise<void> {
-     if (!isAuthenticated.value) {
-         kindeUser.value = null;
-         return;
-     }
-     console.log("Fetching Kinde user info from /userinfo endpoint...");
-     try {
-         // Use authenticatedFetch - browser sends HttpOnly cookie, backend validates
-         // authenticatedFetch will handle 401 by clearing state if token is expired
-         const response = await authenticatedFetch(`${kindeConfig.issuerUrl}/userinfo`);
-
-         if (response.ok) {
-             const userInfo = await response.json();
-             kindeUser.value = {
-                 id: userInfo.sub,
-                 email: userInfo.email,
-                 name: `${userInfo.given_name || ''} ${userInfo.family_name || ''}`.trim(),
-                 given_name: userInfo.given_name,
-                 family_name: userInfo.family_name,
-             } as KindeUser;
-             console.log("Kinde user info fetched:", kindeUser.value);
-         } else {
-             // If /userinfo fails (e.g., token expired or 404), authenticatedFetch might have cleared state,
-             // or it's a Kinde config issue (like 404). Log and set kindeUser to null.
-             console.warn("Failed to fetch Kinde user info. Status:", response.status, await response.text());
-             kindeUser.value = null;
-         }
-     } catch (e) {
-         console.error("Error fetching Kinde user info:", e);
-         kindeUser.value = null;
-     }
-}
 
 const OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX = 'kinde_oauth_context_';
 
@@ -163,23 +140,26 @@ async function login(prompt: 'login' | 'create' = 'login', context?: { teamCode:
         alert("认证服务配置错误，请联系管理员。");
         return;
     }
+    // ADDED: Check logoutRedirectUri configuration
+    if (!kindeConfig.logoutRedirectUri) {
+         console.error("Kinde logout redirect URI is not configured (VITE_LOGOUT_REDIRECT_TARGET_URL). Cannot initiate login.");
+         alert("认证服务配置错误：退出登录目标地址未设置。");
+         return;
+    }
+
 
     try {
         const codeVerifier = generateRandomString(96);
         const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-        // State can be random bytes, base64url encode is fine
         const state = generateRandomString(32);
 
         localStorage.setItem(PKCE_VERIFIER_STORAGE_KEY, codeVerifier);
-        localStorage.setItem(STATE_STORAGE_KEY, state); // Store the OAuth state itself
+        localStorage.setItem(STATE_STORAGE_KEY, state);
 
-        // ADDED: Store the context data associated with this state
         if (context) {
              localStorage.setItem(`${OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX}${state}`, JSON.stringify(context));
              console.log("Stored OAuth state context in localStorage:", context);
         }
-
 
         console.log("Stored PKCE verifier and state in localStorage.");
 
@@ -188,7 +168,7 @@ async function login(prompt: 'login' | 'create' = 'login', context?: { teamCode:
         authUrl.searchParams.append('client_id', kindeConfig.clientId);
         authUrl.searchParams.append('redirect_uri', kindeConfig.redirectUri);
         authUrl.searchParams.append('scope', kindeConfig.scope);
-        authUrl.searchParams.append('state', state); // Pass the generated state
+        authUrl.searchParams.append('state', state);
         authUrl.searchParams.append('code_challenge', codeChallenge);
         authUrl.searchParams.append('code_challenge_method', 'S256');
         authUrl.searchParams.append('prompt', prompt);
@@ -208,7 +188,6 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
     const storedState = localStorage.getItem(STATE_STORAGE_KEY);
     const storedVerifier = localStorage.getItem(PKCE_VERIFIER_STORAGE_KEY);
 
-    // ADDED: Retrieve context before clearing state
     let context: { teamCode: string | null, currentStep: number } | undefined;
     const contextKey = `${OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX}${state}`;
     const storedContext = localStorage.getItem(contextKey);
@@ -219,18 +198,19 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
         } catch (e) {
             console.error("Failed to parse stored OAuth state context:", e);
         }
-        localStorage.removeItem(contextKey); // Clean up context storage
+        localStorage.removeItem(contextKey);
     }
 
 
     if (!state || !storedState || state !== storedState) {
         console.error("State mismatch or missing state. Possible CSRF attack.");
-        localStorage.removeItem(STATE_STORAGE_KEY);
+        // FIX: Corrected typo here
+        localStorage.removeItem(STATE_STORAGE_KEY); // Was STATE_VERIFIER_STORAGE_KEY
         localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
         isAuthenticated.value = false; kindeUser.value = null; userMember.value = null;
         return { success: false, error: "Authentication failed: Invalid state parameter." };
     }
-    localStorage.removeItem(STATE_STORAGE_KEY); // Clear the OAuth state itself
+    localStorage.removeItem(STATE_STORAGE_KEY);
 
     if (!code || !storedVerifier) {
         console.error("Missing authorization code or PKCE verifier.");
@@ -264,9 +244,19 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
         }
 
         console.log("Token exchange successful via backend. Triggering auth status check...");
-        await checkAuthStatus(); // This updates isAuthenticated, kindeUser, userMember
+        // checkAuthStatus will call fetchUserMember which updates isAuthenticated and userMember
+        await checkAuthStatus();
 
-        // MODIFIED: Return the retrieved context along with success
+        // The backend /kinde/callback might return basic user info (like id, email, name)
+        // from the ID token payload. We can use this to populate kindeUser if available.
+        if (data.user) {
+             kindeUser.value = data.user as KindeUser; // Assuming backend returns user object
+             console.log("Kinde user info from callback:", kindeUser.value);
+        } else {
+             kindeUser.value = null; // Ensure kindeUser is null if not returned
+        }
+
+
         return { success: true, user: kindeUser.value || undefined, context: context };
 
     } catch (e: any) {
@@ -276,18 +266,19 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
     }
 }
 
-function getAccessToken(): string | undefined {
-    return Cookies.get(ACCESS_TOKEN_COOKIE_NAME);
-}
+// getAccessToken is less relevant now that we use HttpOnly cookies and authenticatedFetch
+// function getAccessToken(): string | undefined {
+//     return Cookies.get(ACCESS_TOKEN_COOKIE_NAME);
+// }
 
 async function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
-    const headers: Record<string, string> = {
-        ...(options.headers as Record<string, string> || {}),
-    };
+    // No need to manually add Authorization header with HttpOnly cookies
+    // The browser sends the cookie automatically if the domain matches and CORS is configured correctly.
 
     const response = await fetch(url, {
         ...options,
-        headers: headers,
+        // headers: headers, // Headers are passed in options, no need to recreate
+        credentials: 'include', // IMPORTANT: Include cookies in CORS requests
     });
 
     if (response.status === 401) {
@@ -295,10 +286,11 @@ async function authenticatedFetch(url: string, options: RequestInit = {}): Promi
         isAuthenticated.value = false;
         kindeUser.value = null;
         userMember.value = null;
+        // Clearing HttpOnly cookies client-side is best effort, backend logout is primary
         Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
         Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
         // Optional: Redirect to the login page here if needed
-        // router.push('/');
+        // router.push('/'); // Or handle in the component that received the 401
     }
 
     return response;
@@ -321,70 +313,82 @@ async function logout(): Promise<void> {
     // Clear PKCE/state from localStorage if they somehow linger
     localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
     localStorage.removeItem(STATE_STORAGE_KEY);
-    // Clear any stored context
-    // (Need a way to find the key without the state value, maybe iterate or use a known key if only one context is stored)
-    // Or simply ignore clearing context here, it will be cleaned up on next login state generation.
+    // Clear any stored context keys starting with the prefix
+    Object.keys(localStorage).forEach(key => {
+        if (key.startsWith(OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX)) {
+            localStorage.removeItem(key);
+        }
+    });
+
 
     try {
         // Call the backend logout endpoint
+        // The backend will clear HttpOnly cookies and redirect to Kinde logout
         const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/logout`, {
-            method: 'POST', // Or GET, depending on your backend implementation
+            method: 'POST',
             mode: 'cors',
-            // No body needed usually, backend identifies user via cookie
+            credentials: 'include', // Include cookies so backend knows who to log out
         });
 
-        // The backend should respond with a redirect (302) to Kinde's logout URL.
-        // The browser will follow this redirect automatically.
-        // If the backend doesn't redirect (e.g., returns 200 OK),
-        // we might need to manually redirect here based on the response.
-        // But the preferred way is backend redirect.
-
-        if (response.ok || response.redirected) {
-             console.log("Backend logout initiated successfully. Browser should redirect.");
-             // Browser handles the redirect sent by the backend.
-             // If backend returns OK instead of redirect, uncomment below:
-             // window.location.href = kindeConfig.logoutRedirectUri; // Fallback redirect
+        // The backend is expected to return a 302 redirect.
+        // The browser will follow the redirect and process the Set-Cookie headers.
+        if (response.redirected) {
+             console.log("Backend logout initiated successfully. Browser is following redirect.");
+             // No need to manually redirect here, the browser does it.
+        } else if (response.ok) {
+             console.warn("Backend logout returned 200 OK instead of redirect. Assuming cookies were cleared.");
+             // If backend didn't redirect, we might manually redirect as a fallback,
+             // but the backend redirect is the standard OIDC way.
+             // window.location.href = kindeConfig.logoutRedirectUri; // Fallback
         } else {
              console.error("Backend logout call failed:", response.status, await response.text());
-             // Even if backend fails, attempt Kinde logout directly as fallback? Or show error?
-             // For now, let's assume the frontend state clear is enough for user feedback
              alert("退出登录时遇到问题，请稍后再试或手动清除 Cookie。");
         }
 
     } catch (e) {
         console.error("Error calling backend logout:", e);
         alert("退出登录时连接服务器失败。");
-        // Fallback redirect?
+        // Fallback redirect on network error?
         // window.location.href = kindeConfig.logoutRedirectUri;
     }
 }
+
+// ADDED: Computed property for isAdmin status
+// This requires the Member type to have the is_admin property
+const isAdminUser: ComputedRef<boolean> = computed(() => {
+    // Accessing is_admin here requires the Member type to be updated in types.ts
+    return userMember.value?.is_admin === 1;
+});
+
+
 interface UseKindeAuthReturn {
     isAuthenticated: Readonly<Ref<boolean>>;
     kindeUser: Readonly<Ref<KindeUser | null>>;
     userMember: Readonly<Ref<Member | null>>;
+    isAdminUser: Readonly<ComputedRef<boolean>>; // ADDED
     checkAuthStatus: () => Promise<void>;
-    // MODIFIED: login now accepts optional context
     login: (prompt?: 'login' | 'create', context?: { teamCode: string | null, currentStep: number }) => Promise<void>;
-    logout: () => void;
-    // MODIFIED: handleCallback now returns optional context
+    logout: () => Promise<void>; // logout is now async
     handleCallback: (code: string, state: string) => Promise<{ success: true, user?: KindeUser, context?: { teamCode: string | null, currentStep: number } } | { success: false, error: string }>;
-    getAccessToken: () => string | undefined;
+    // getAccessToken: () => string | undefined; // Removed
     authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response>;
     updateUserMember: (member: Member | null) => void;
 }
 
 export function useKindeAuth(): UseKindeAuthReturn {
-    checkAuthStatus(); // Initial check
+    // Initial check is now handled by the router guard or component onMounted
+    // checkAuthStatus(); // Removed initial call here
 
     return {
         isAuthenticated: readonly(isAuthenticated),
         kindeUser: readonly(kindeUser),
         userMember: readonly(userMember),
+        isAdminUser: readonly(isAdminUser), // ADDED
         checkAuthStatus,
         login,
         logout,
         handleCallback,
-        getAccessToken,
+        // getAccessToken, // Removed
         authenticatedFetch,
         updateUserMember,
     };

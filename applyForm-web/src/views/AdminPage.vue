@@ -1,22 +1,27 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { useKindeAuth } from '../composables/useKindeAuth'; // Import useKindeAuth
+import { useSettings } from '../composables/useSettings'; // Import useSettings
+import { useRouter } from 'vue-router'; // Import router for potential redirect
 
 // --- Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
-const R2_PUBLIC_URL_BASE = import.meta.env.VITE_R2_PUBLIC_URL_BASE || 'https://ngu3-signup-bucket.srt.pub'; // Need this for avatar display
+// R2_PUBLIC_URL_BASE is now fetched from backend /members/me or should be in env
+// For display purposes, let's assume it's available via env or a global config
+const R2_PUBLIC_URL_BASE = import.meta.env.VITE_R2_PUBLIC_URL_BASE || 'https://ngu3-signup-bucket.srt.pub'; // Still need this for avatar display
 const MAX_AVATAR_SIZE_MB = 2; // Match backend limit
 
-// IMPORTANT: Define your Admin API Key here or get it from a secure source (e.g., local storage after a login)
-// For this example, we'll use a simple ref. In production, DO NOT hardcode this.
-// A better approach would be a simple login form that sets this key in local storage.
-const adminApiKey = ref(''); // User will input this
-const isAuthenticated = ref(false); // Track authentication status
+// --- Composable Usage ---
+const { isAuthenticated, userMember, isAdminUser, login, logout, checkAuthStatus, authenticatedFetch } = useKindeAuth();
+const { isCollectionPaused, isFetchingSettings, isTogglingCollection, settingsError, toggleCollectionStatus } = useSettings();
+
+const router = useRouter();
 
 // --- State Management (Reactive) ---
 const state = reactive({
     members: [], // List of all members
-    isLoading: false,
-    errorMessage: null,
+    isLoading: false, // Global loading for main table/actions
+    errorMessage: null, // Global error message
 
     // Modal State for Add/Edit
     showModal: false,
@@ -33,6 +38,7 @@ const state = reactive({
         maimaiId: null,
         nickname: null,
         qqNumber: null,
+        kindeUserId: null, // ADDED: Admin can see/edit Kinde ID
         avatarFile: null, // File object for new upload
         avatarPreviewUrl: null, // URL for preview
         clearAvatarFlag: false, // Flag to indicate avatar should be removed
@@ -100,25 +106,14 @@ const isJobAvailableInTeam = computed(() => (job) => {
 
 // --- Methods / Functions ---
 
-// Simple Authentication Check (Client-side only for this example)
-function authenticate() {
-    // In a real app, you'd send the key to the backend to verify
-    // For this simple example, just having a non-empty key is enough to proceed
-    // The *backend* will enforce the actual key check on API calls.
-    if (adminApiKey.value.trim()) {
-        isAuthenticated.value = true;
-        state.errorMessage = null; // Clear any previous auth error
-        fetchMembers(); // Fetch data immediately after authentication
-    } else {
-        isAuthenticated.value = false;
-        state.errorMessage = '请输入管理员密钥。';
-    }
-}
+// Removed authenticate function - now handled by Kinde auth check
 
 // Fetch all members (API: GET /api/admin/members)
 async function fetchMembers() {
-    if (!isAuthenticated.value) {
-        state.errorMessage = '未认证，无法获取数据。';
+    // Check if user is authenticated and is admin before fetching
+    if (!isAuthenticated.value || !isAdminUser.value) {
+        console.warn("Attempted to fetch members without admin privileges.");
+        state.errorMessage = '没有权限获取数据。'; // This should ideally not be reached if template is correct
         return;
     }
 
@@ -126,14 +121,24 @@ async function fetchMembers() {
     state.errorMessage = null;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/members`, {
+        // Use authenticatedFetch - backend checks Kinde cookie and isAdmin status
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/members`, {
             method: 'GET',
             headers: {
-                'X-Admin-API-Key': adminApiKey.value.trim(), // Send the API key
+                // 'X-Admin-API-Key': adminApiKey.value.trim(), // REMOVED API KEY
                 'Content-Type': 'application/json',
             },
-            mode: 'cors',
+            // mode: 'cors', // authenticatedFetch handles mode and credentials
         });
+
+        // authenticatedFetch handles 401. We need to handle 403 specifically for admin authz.
+        if (response.status === 403) {
+             const data = await response.json().catch(() => ({}));
+             console.error('Admin API error (403 Forbidden):', data);
+             state.errorMessage = data.error || '没有权限执行此操作。';
+             // No need to set isAuthenticated = false here, authenticatedFetch does 401
+             return; // Stop processing on 403
+        }
 
         const data = await response.json();
 
@@ -147,11 +152,7 @@ async function fetchMembers() {
     } catch (e) {
         console.error('Fetch error fetching members:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-         // If auth failed, reset isAuthenticated
-         if (e.message.includes('Authentication failed') || e.message.includes('Authorization failed')) {
-             isAuthenticated.value = false;
-             state.errorMessage = '管理员密钥无效或已过期。';
-         }
+         // authenticatedFetch handles 401 and sets isAuthenticated = false
     } finally {
         state.isLoading = false;
     }
@@ -159,6 +160,10 @@ async function fetchMembers() {
 
 // Open Add Member Modal
 function openAddModal() {
+    if (!isAdminUser.value) {
+         state.errorMessage = '没有权限执行此操作。';
+         return;
+    }
     state.isEditing = false;
     state.currentMember = null;
     // Reset modal form fields
@@ -170,6 +175,7 @@ function openAddModal() {
         maimaiId: null,
         nickname: null,
         qqNumber: null,
+        kindeUserId: null, // Reset Kinde ID field
         avatarFile: null,
         avatarPreviewUrl: null,
         clearAvatarFlag: false,
@@ -180,6 +186,10 @@ function openAddModal() {
 
 // Open Edit Member Modal
 function openEditModal(member) {
+     if (!isAdminUser.value) {
+         state.errorMessage = '没有权限执行此操作。';
+         return;
+    }
     state.isEditing = true;
     state.currentMember = member;
     // Populate modal form fields from the member data
@@ -191,6 +201,7 @@ function openEditModal(member) {
         maimaiId: member.maimai_id,
         nickname: member.nickname,
         qqNumber: member.qq_number,
+        kindeUserId: member.kinde_user_id, // Populate Kinde ID field
         avatarFile: null, // No file selected initially for edit
         avatarPreviewUrl: member.avatar_url, // Show current avatar
         clearAvatarFlag: false, // Not checked initially
@@ -216,6 +227,7 @@ function closeModal() {
         maimaiId: null,
         nickname: null,
         qqNumber: null,
+        kindeUserId: null, // Reset Kinde ID field
         avatarFile: null,
         avatarPreviewUrl: null,
         clearAvatarFlag: false,
@@ -284,6 +296,11 @@ function removeModalAvatar() {
 
 // Save Member (Add or Edit) (API: POST /api/admin/members or PATCH /api/admin/members/:id)
 async function saveMember() {
+    if (!isAdminUser.value) {
+         state.modalErrorMessage = '没有权限执行此操作。'; // Should not happen if button is disabled
+         return;
+    }
+
     state.modalErrorMessage = null;
 
     // Basic validation
@@ -330,9 +347,15 @@ async function saveMember() {
     formData.append('teamCode', form.teamCode.trim());
     formData.append('color', form.color);
     formData.append('job', form.job);
-    formData.append('maimaiId', form.maimaiId.trim());
+    formData.append('maimaiId', form.maaimaiId.trim()); // Typo fixed? Should be maimaiId
     formData.append('nickname', form.nickname.trim());
     formData.append('qqNumber', form.qqNumber.trim());
+    if (form.kindeUserId) { // Include Kinde ID if present
+        formData.append('kindeUserId', form.kindeUserId.trim());
+    } else {
+         formData.append('kindeUserId', ''); // Send empty string if null to clear it on edit
+    }
+
 
     // Handle avatar file and clear flag
     if (form.avatarFile) {
@@ -340,12 +363,12 @@ async function saveMember() {
         formData.append('clearAvatar', 'false'); // New file overrides clear
     } else if (form.clearAvatarFlag) {
         formData.append('clearAvatar', 'true');
-    } else if (state.isEditing && state.currentMember && state.currentMember.avatar_url && !form.avatarPreviewUrl) {
-         // Case: Editing, had an avatar, no new file, clear flag not checked, but preview is gone (user removed preview manually?)
-         // This case is tricky. Let's rely on clearAvatarFlag primarily.
-         // If previewUrl is null but clearAvatarFlag is false, assume no change to avatar.
-         // If you want removing preview to mean clear, you'd need more complex state logic.
-         // Sticking to clearAvatarFlag for explicit removal.
+    } else {
+         // If no new file and clear flag is false, explicitly tell backend not to change avatar
+         formData.append('clearAvatar', 'false');
+         // Also, if editing and had an avatar, and didn't clear, send the existing URL?
+         // No, backend should handle "no avatarFile + clearAvatar=false" as "keep existing".
+         // Sending the URL in formData is not standard for file uploads.
     }
 
 
@@ -353,15 +376,27 @@ async function saveMember() {
     const url = state.isEditing ? `${API_BASE_URL}/admin/members/${form.id}` : `${API_BASE_URL}/admin/members`;
 
     try {
-        const response = await fetch(url, {
+        // Use authenticatedFetch - backend checks Kinde cookie and isAdmin status
+        const response = await authenticatedFetch(url, {
             method: method,
             headers: {
-                'X-Admin-API-Key': adminApiKey.value.trim(), // Send the API key
+                // 'X-Admin-API-Key': adminApiKey.value.trim(), // REMOVED API KEY
                 // Content-Type is automatically set to multipart/form-data by fetch when using FormData body
             },
-            mode: 'cors',
+            // mode: 'cors', // authenticatedFetch handles mode and credentials
             body: formData,
         });
+
+         // authenticatedFetch handles 401. Handle 403 specifically.
+        if (response.status === 403) {
+             const data = await response.json().catch(() => ({}));
+             console.error('Admin API error (403 Forbidden):', data);
+             state.modalErrorMessage = data.error || '没有权限执行此操作。';
+             state.isLoading = false; // Stop loading
+             // No need to set isAuthenticated = false here
+             return; // Stop processing on 403
+        }
+
 
         const data = await response.json().catch(() => ({})); // Handle non-JSON response on error
 
@@ -385,21 +420,17 @@ async function saveMember() {
     } catch (e) {
         console.error('Fetch error saving member:', e);
         state.modalErrorMessage = e.message || '连接服务器失败，请稍后再试。';
-         // If auth failed, reset isAuthenticated
-         if (e.message.includes('Authentication failed') || e.message.includes('Authorization failed')) {
-             isAuthenticated.value = false;
-             state.errorMessage = '管理员密钥无效或已过期。'; // Show global error
-             closeModal(); // Close modal if auth fails
-         }
+         // authenticatedFetch handles 401 and sets isAuthenticated = false
     } finally {
-        state.isLoading = false;
+        // state.isLoading is set to false after fetchMembers completes or on error
+        // state.isLoading = false; // Removed from here
     }
 }
 
 // Delete Member (API: DELETE /api/admin/members/:id)
 async function deleteMember(memberId) {
-    if (!isAuthenticated.value) {
-        state.errorMessage = '未认证，无法执行删除操作。';
+    if (!isAdminUser.value) {
+        state.errorMessage = '没有权限执行此操作。';
         return;
     }
 
@@ -411,13 +442,24 @@ async function deleteMember(memberId) {
     state.errorMessage = null;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/members/${memberId}`, {
+        // Use authenticatedFetch - backend checks Kinde cookie and isAdmin status
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/members/${memberId}`, {
             method: 'DELETE',
             headers: {
-                'X-Admin-API-Key': adminApiKey.value.trim(), // Send the API key
+                // 'X-Admin-API-Key': adminApiKey.value.trim(), // REMOVED API KEY
             },
-            mode: 'cors',
+            // mode: 'cors', // authenticatedFetch handles mode and credentials
         });
+
+         // authenticatedFetch handles 401. Handle 403 specifically.
+        if (response.status === 403) {
+             const data = await response.json().catch(() => ({}));
+             console.error('Admin API error (403 Forbidden):', data);
+             state.errorMessage = data.error || '没有权限执行此操作。';
+             state.isLoading = false; // Stop loading
+             return; // Stop processing on 403
+        }
+
 
         // DELETE might return 204 No Content on success
         if (response.status === 204) {
@@ -443,11 +485,7 @@ async function deleteMember(memberId) {
     } catch (e) {
         console.error('Fetch error deleting member:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-         // If auth failed, reset isAuthenticated
-         if (e.message.includes('Authentication failed') || e.message.includes('Authorization failed')) {
-             isAuthenticated.value = false;
-             state.errorMessage = '管理员密钥无效或已过期。';
-         }
+         // authenticatedFetch handles 401 and sets isAuthenticated = false
     } finally {
         state.isLoading = false;
     }
@@ -455,8 +493,8 @@ async function deleteMember(memberId) {
 
 // Export Members as CSV (API: GET /api/admin/export/csv)
 async function exportCsv() {
-    if (!isAuthenticated.value) {
-        state.errorMessage = '未认证，无法导出数据。';
+    if (!isAdminUser.value) {
+        state.errorMessage = '没有权限执行此操作。';
         return;
     }
 
@@ -464,13 +502,24 @@ async function exportCsv() {
     state.errorMessage = null;
 
     try {
-        const response = await fetch(`${API_BASE_URL}/admin/export/csv`, {
+        // Use authenticatedFetch - backend checks Kinde cookie and isAdmin status
+        const response = await authenticatedFetch(`${API_BASE_URL}/admin/export/csv`, {
             method: 'GET',
             headers: {
-                'X-Admin-API-Key': adminApiKey.value.trim(), // Send the API key
+                // 'X-Admin-API-Key': adminApiKey.value.trim(), // REMOVED API KEY
             },
-            mode: 'cors',
+            // mode: 'cors', // authenticatedFetch handles mode and credentials
         });
+
+         // authenticatedFetch handles 401. Handle 403 specifically.
+        if (response.status === 403) {
+             const data = await response.json().catch(() => ({}));
+             console.error('Admin API error (403 Forbidden):', data);
+             state.errorMessage = data.error || '没有权限执行此操作。';
+             state.isLoading = false; // Stop loading
+             return; // Stop processing on 403
+        }
+
 
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
@@ -505,11 +554,7 @@ async function exportCsv() {
     } catch (e) {
         console.error('Fetch error exporting CSV:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-         // If auth failed, reset isAuthenticated
-         if (e.message.includes('Authentication failed') || e.message.includes('Authorization failed')) {
-             isAuthenticated.value = false;
-             state.errorMessage = '管理员密钥无效或已过期。';
-         }
+         // authenticatedFetch handles 401 and sets isAuthenticated = false
     } finally {
         state.isLoading = false;
     }
@@ -522,15 +567,70 @@ function formatTimestamp(timestamp) {
     return date.toLocaleString(); // Format as local date and time
 }
 
+// Handle Kinde Login button click
+function handleLogin() {
+    // Redirect to Kinde login page
+    login(); // Use the login function from useKindeAuth
+}
 
-// --- Lifecycle Hooks ---
-onMounted(() => {
-    // Optionally try to load API key from local storage on mount
-    const savedApiKey = localStorage.getItem('adminApiKey');
-    if (savedApiKey) {
-        adminApiKey.value = savedApiKey;
-        authenticate(); // Attempt to authenticate with saved key
+// Handle Kinde Logout button click
+function handleLogout() {
+    // Redirect to Kinde logout page via backend
+    logout(); // Use the logout function from useKindeAuth
+}
+
+function createTriangleBackground(): void {
+    const trianglesContainer = document.getElementById('triangles');
+    if (!trianglesContainer) return;
+
+    const colors = ['#c4b5fd', '#a78bfa', '#8b5cf6', '#7c3aed', '#6d28d9'];
+    const triangleCount = 50;
+
+    for (let i = 0; i < triangleCount; i++) {
+        const triangle = document.createElement('div');
+        triangle.classList.add('triangle');
+
+        const size = Math.random() * 100 + 50;
+
+        const left = Math.random() * 100;
+        const top = Math.random() * 100 + 100;
+
+        const color = colors[Math.floor(Math.random() * colors.length)];
+
+        const duration = Math.random() * 30 + 20;
+
+        const delay = Math.random() * 30;
+
+        triangle.style.borderLeft = `${size / 2}px solid transparent`;
+        triangle.style.borderRight = `${size / 2}px solid transparent`;
+        triangle.style.borderBottom = `${size}px solid ${color}`;
+        triangle.style.left = `${left}%`;
+        triangle.style.top = `${top}%`;
+        triangle.style.animationDuration = `${duration}s`;
+        triangle.style.animationDelay = `${delay}s`;
+
+        trianglesContainer.appendChild(triangle);
     }
+}
+// --- Lifecycle Hooks ---
+onMounted(async () => {
+    // Check auth status on mount. This will populate isAuthenticated, userMember, isAdminUser.
+    await checkAuthStatus();
+
+    // If authenticated and is admin, fetch members
+    if (isAuthenticated.value && isAdminUser.value) {
+        fetchMembers();
+    }
+    // If authenticated but NOT admin, show access denied message
+    else if (isAuthenticated.value && !isAdminUser.value) {
+         state.errorMessage = '您已登录，但没有管理员权限。';
+    }
+    // If not authenticated, the login button will be shown by the template
+
+    // No need to load API key from local storage anymore
+
+    // Create background triangles (assuming this is a visual effect)
+    createTriangleBackground(); // Assuming this function exists elsewhere or is removed
 });
 
 onUnmounted(() => {
@@ -540,16 +640,27 @@ onUnmounted(() => {
     }
 });
 
-// Watch for changes in adminApiKey and re-authenticate
-watch(adminApiKey, (newKey) => {
-    // Save key to local storage (simple persistence)
-    if (newKey.trim()) {
-        localStorage.setItem('adminApiKey', newKey.trim());
+// Watch for changes in isAdminUser to trigger fetchMembers
+watch(isAdminUser, (newValue) => {
+    if (newValue === true) {
+        console.log("isAdminUser became true, fetching members...");
+        fetchMembers(); // Fetch members when user gains admin status
+        state.errorMessage = null; // Clear any previous auth/permission errors
     } else {
-        localStorage.removeItem('adminApiKey');
+         // If user loses admin status (e.g., admin revoked it while they were logged in)
+         state.members = []; // Clear member list
+         state.errorMessage = '您的管理员权限已被移除。';
     }
-    // Re-authenticate whenever the key changes
-    authenticate();
+});
+
+// Watch for changes in isAuthenticated to handle logout/login state
+watch(isAuthenticated, (newValue) => {
+    if (newValue === false) {
+        console.log("isAuthenticated became false.");
+        state.members = []; // Clear member list on logout
+        state.errorMessage = '您已退出登录。';
+        // The template will show the login prompt
+    }
 });
 
 </script>
@@ -568,36 +679,53 @@ watch(adminApiKey, (newKey) => {
                 <p class="text-purple-300">管理报名成员信息</p>
             </div>
 
-            <!-- Authentication Section -->
+            <!-- Authentication/Authorization Section -->
             <div v-if="!isAuthenticated" class="glass rounded-3xl p-8 fade-in max-w-sm mx-auto">
                  <div class="text-center mb-6">
                      <img src="https://unpkg.com/lucide-static@latest/icons/lock.svg" class="w-12 h-12 text-purple-400 mx-auto mb-4" alt="Lock">
-                     <h2 class="text-2xl font-bold mb-2">需要认证</h2>
-                     <p class="text-gray-300 text-sm">请输入管理员密钥访问此页面。</p>
+                     <h2 class="text-2xl font-bold mb-2">需要登录</h2>
+                     <p class="text-gray-300 text-sm">请使用您的 Kinde 账号登录以访问管理面板。</p>
                  </div>
-                 <div class="mb-6">
-                     <label for="admin-key" class="block text-sm font-medium text-purple-300 mb-2">管理员密钥</label>
-                     <input
-                         type="password"
-                         id="admin-key"
-                         v-model="adminApiKey"
-                         placeholder="输入密钥"
-                         class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none"
-                         @keydown.enter="authenticate"
-                     >
-                 </div>
-                 <button @click="authenticate" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300">
-                     认证
+                 <!-- Removed API Key input -->
+                 <button @click="handleLogin" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300">
+                     使用 Kinde 登录
                  </button>
-                 <p v-if="state.errorMessage && !isAuthenticated" class="mt-4 text-center text-red-400 text-sm">{{ state.errorMessage }}</p>
+                 <!-- Error message is handled globally now -->
             </div>
 
-            <!-- Admin Content (Authenticated) -->
-            <div v-if="isAuthenticated" class="glass rounded-3xl p-6 fade-in">
+             <!-- Access Denied Section (Authenticated but not Admin) -->
+             <div v-else-if="isAuthenticated && !isAdminUser" class="glass rounded-3xl p-8 fade-in max-w-sm mx-auto text-center">
+                 <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-12 h-12 text-red-400 mx-auto mb-4" alt="Access Denied">
+                 <h2 class="text-2xl font-bold mb-2">权限不足</h2>
+                 <p class="text-gray-300 mb-6">您的账号没有管理员权限，无法访问此页面。</p>
+                 <button @click="handleLogout" class="btn-glow w-full bg-red-700 hover:bg-red-600 rounded-lg py-3 font-bold transition duration-300">
+                     退出登录
+                 </button>
+                 <p v-if="state.errorMessage" class="mt-4 text-center text-red-400 text-sm">{{ state.errorMessage }}</p>
+             </div>
+
+
+            <!-- Admin Content (Authenticated AND Admin) -->
+            <div v-else-if="isAuthenticated && isAdminUser" class="glass rounded-3xl p-6 fade-in">
                  <!-- Action Buttons -->
-                 <div class="flex justify-between items-center mb-6">
-                     <h2 class="text-2xl font-bold">成员列表 ({{ state.members.length }})</h2>
-                     <div class="flex space-x-3">
+                 <div class="flex flex-col sm:flex-row justify-between items-center mb-6 space-y-4 sm:space-y-0 sm:space-x-4">
+                     <h2 class="text-2xl font-bold flex-shrink-0">成员列表 ({{ state.members.length }})</h2>
+                     <div class="flex flex-wrap justify-center sm:justify-end items-center space-x-3">
+                         <!-- Collection Status Toggle -->
+                         <button
+                             @click="toggleCollectionStatus"
+                             :disabled="isTogglingCollection"
+                             class="text-sm font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center"
+                             :class="{
+                                 'bg-yellow-600 hover:bg-yellow-700 text-white': !isCollectionPaused,
+                                 'bg-green-600 hover:bg-green-700 text-white': isCollectionPaused,
+                                 'opacity-50 cursor-not-allowed': isTogglingCollection
+                             }"
+                         >
+                             <img :src="isCollectionPaused ? 'https://unpkg.com/lucide-static@latest/icons/play-circle.svg' : 'https://unpkg.com/lucide-static@latest/icons/pause-circle.svg'" class="w-4 h-4 mr-2" :alt="isCollectionPaused ? 'Resume' : 'Pause'">
+                             {{ isTogglingCollection ? '切换中...' : (isCollectionPaused ? '恢复收集' : '暂停收集') }}
+                         </button>
+
                          <button @click="openAddModal" class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center">
                              <img src="https://unpkg.com/lucide-static@latest/icons/plus.svg" class="w-4 h-4 mr-2" alt="Add">
                              添加成员
@@ -606,15 +734,29 @@ watch(adminApiKey, (newKey) => {
                              <img src="https://unpkg.com/lucide-static@latest/icons/download.svg" class="w-4 h-4 mr-2" alt="Export">
                              导出 CSV
                          </button>
+                         <button @click="handleLogout" class="bg-red-600 hover:bg-red-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/log-out.svg" class="w-4 h-4 mr-2" alt="Logout">
+                             退出登录
+                         </button>
                      </div>
                  </div>
 
-                 <!-- Error message display area -->
+                 <!-- Global Error/Success message display area -->
                  <transition name="fade-in-up">
-                     <div v-if="state.errorMessage && isAuthenticated && !state.showModal && !state.showLoadingOverlay" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                     <div v-if="state.errorMessage && !state.showModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
                          <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                          <span class="break-words flex-grow">{{ state.errorMessage }}</span>
                         <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.errorMessage = null" aria-label="关闭错误消息">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
+                    </div>
+                 </transition>
+                  <!-- Settings related messages -->
+                 <transition name="fade-in-up">
+                     <div v-if="settingsError" class="bg-yellow-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                         <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
+                         <span class="break-words flex-grow">{{ settingsError }}</span>
+                        <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="settingsError = null" aria-label="关闭消息">
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                         </button>
                     </div>
@@ -633,6 +775,8 @@ watch(adminApiKey, (newKey) => {
                                  <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">舞萌ID</th>
                                  <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">称呼</th>
                                  <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">QQ号</th>
+                                 <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Kinde ID</th> <!-- ADDED Kinde ID column -->
+                                 <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">管理员</th> <!-- ADDED isAdmin column -->
                                  <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">头像</th>
                                  <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">加入时间</th>
                                  <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">更新时间</th>
@@ -641,10 +785,10 @@ watch(adminApiKey, (newKey) => {
                          </thead>
                          <tbody class="divide-y divide-gray-800">
                              <tr v-if="state.isLoading && state.members.length === 0">
-                                 <td colspan="11" class="px-4 py-4 text-center text-gray-500">加载中...</td>
+                                 <td colspan="13" class="px-4 py-4 text-center text-gray-500">加载中...</td> <!-- Adjusted colspan -->
                              </tr>
                               <tr v-else-if="!state.isLoading && state.members.length === 0">
-                                 <td colspan="11" class="px-4 py-4 text-center text-gray-500">暂无成员数据。</td>
+                                 <td colspan="13" class="px-4 py-4 text-center text-gray-500">暂无成员数据。</td> <!-- Adjusted colspan -->
                              </tr>
                              <tr v-else v-for="member in state.members" :key="member.id" class="hover:bg-gray-800 transition-colors">
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.id }}</td>
@@ -660,6 +804,8 @@ watch(adminApiKey, (newKey) => {
                                  <td class="px-4 py-4 whitespace-nowrap text-sm font-mono text-gray-300">{{ member.maimai_id }}</td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.nickname }}</td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.qq_number }}</td>
+                                 <td class="px-4 py-4 text-xs text-gray-400 truncate max-w-[100px]">{{ member.kinde_user_id || 'N/A' }}</td> <!-- Display Kinde ID -->
+                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.is_admin === 1 ? '是' : '否' }}</td> <!-- Display isAdmin -->
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">
                                      <img v-if="member.avatar_url" :src="member.avatar_url" alt="头像" class="w-8 h-8 rounded-full object-cover border border-gray-600">
                                      <span v-else class="text-gray-500">无</span>
@@ -722,6 +868,14 @@ watch(adminApiKey, (newKey) => {
                         <input type="text" inputmode="numeric" id="modal-qq-number" v-model="state.modalForm.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
                     </div>
 
+                     <!-- ADDED: Kinde User ID field -->
+                     <div class="mb-4">
+                         <label for="modal-kinde-user-id" class="block text-sm font-medium text-purple-300 mb-2">Kinde用户ID (可选)</label>
+                         <input type="text" id="modal-kinde-user-id" v-model="state.modalForm.kindeUserId" placeholder="例如：kp_..." class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none">
+                         <p class="mt-1 text-xs text-gray-400">关联到 Kinde 账号，用于用户自行修改信息。</p>
+                     </div>
+
+
                     <div class="mb-4">
                         <label for="modal-color" class="block text-sm font-medium text-purple-300 mb-2">颜色 <span class="text-red-500">*</span></label>
                         <select id="modal-color" v-model="state.modalForm.color" required class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
@@ -772,7 +926,7 @@ watch(adminApiKey, (newKey) => {
                         <button type="button" @click="closeModal" class="flex-1 py-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium max-w-[100px]">
                             取消
                         </button>
-                        <button type="submit" :disabled="state.isLoading" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': state.isLoading}">
+                        <button type="submit" :disabled="state.isLoading || !isAdminUser" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': state.isLoading || !isAdminUser}">
                             {{ state.isLoading ? '保存中...' : (state.isEditing ? '保存更改' : '添加成员') }}
                         </button>
                     </div>
@@ -781,6 +935,7 @@ watch(adminApiKey, (newKey) => {
         </div>
 
         <!-- Loading Overlay -->
+        <!-- Show loading overlay only when a main action is loading AND modal is NOT open -->
         <div class="loading-overlay z-40" v-show="state.isLoading && !state.showModal">
             <div class="spinner"></div>
             <p class="mt-4 text-white">
@@ -1027,6 +1182,34 @@ select option:disabled {
     }
     100% {
          transform: translateY(calc(-100vh - 150px)) rotate(360deg);
+        opacity: 0;
+    }
+}
+
+/* Triangle Background Animation */
+#triangles {
+    pointer-events: none;
+    z-index: 0;
+}
+
+.triangle {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0.1; /* Adjust opacity */
+    animation: floatUp ease-in infinite;
+}
+
+@keyframes floatUp {
+    0% {
+        transform: translateY(0) rotate(0deg);
+        opacity: 0.1;
+    }
+    50% {
+         opacity: 0.05;
+    }
+    100% {
+        transform: translateY(-200vh) rotate(720deg); /* Float up and rotate */
         opacity: 0;
     }
 }

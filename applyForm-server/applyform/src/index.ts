@@ -4,6 +4,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'; // Import jose functions
 import { Env } from './types'; // Import your updated Env interface
 import { D1Database, R2Bucket, ExecutionContext } from "@cloudflare/workers-types"; // Standard Worker types
+import { getCookie, setCookie } from 'hono/cookie';
 
 // --- Configuration & Constants ---
 const CORS_HEADERS = {
@@ -59,7 +60,7 @@ async function uploadAvatar(env: Env, file: File, identifier: string, teamCode: 
         const uploadResult = await env.AVATAR_BUCKET.put(objectKey, file.stream());
         // Assuming your R2 bucket has a public access URL configured
         // Replace with your actual R2 public URL base
-        const r2PublicUrlBase = 'https://pub-YOUR-R2-ID.r2.dev'; // <-- REPLACE WITH YOUR R2 PUBLIC URL BASE
+        const r2PublicUrlBase = env.R2_PUBLIC_URL_BASE; // <-- REPLACE WITH YOUR R2 PUBLIC URL BASE
         return `${r2PublicUrlBase}/${objectKey}`;
     } catch (e) {
         console.error("R2 upload failed:", e);
@@ -73,7 +74,7 @@ async function deleteAvatarFromR2(env: Env, url: string): Promise<void> {
     // Implement your R2 deletion logic here using env.AVATAR_BUCKET
     try {
         // Extract the object key from the URL
-        const r2PublicUrlBase = 'https://pub-YOUR-R2-ID.r2.dev'; // <-- REPLACE WITH YOUR R2 PUBLIC URL BASE
+        const r2PublicUrlBase = env.R2_PUBLIC_URL_BASE; // <-- REPLACE WITH YOUR R2 PUBLIC URL BASE
         if (url.startsWith(r2PublicUrlBase)) {
             const objectKey = url.substring(r2PublicUrlBase.length + 1); // +1 for the leading slash
             console.log(`Deleting R2 object with key: ${objectKey}`);
@@ -220,9 +221,32 @@ async function getAuthenticatedKindeUser(request: Request, env: Env): Promise<st
     return verificationResult.userId; // Return the Kinde user ID
 }
 
-
+// --- Collection Status Helper ---
+async function isCollectionPaused(env: Env): Promise<boolean> {
+    try {
+        const setting = await env.DB.prepare('SELECT value FROM settings WHERE key = ? LIMIT 1')
+            .bind('collection_paused')
+            .first<{ value: string }>();
+        // Return true if the setting exists and its value is 'true'
+        return setting?.value === 'true';
+    } catch (e) {
+        console.error('Database error fetching collection_paused setting:', e);
+        // Default to not paused on error, or handle as needed
+        return false;
+    }
+}
 // --- Route Handlers ---
-
+// GET /api/settings (Public)
+async function handleGetSettings(request: Request, env: Env): Promise<Response> {
+    console.log('Handling /api/settings request...');
+    try {
+        const paused = await isCollectionPaused(env);
+        return apiResponse({ collection_paused: paused }, 200);
+    } catch (e) {
+        console.error('Error fetching settings:', e);
+        return apiError('Failed to fetch settings.', 500, e);
+    }
+}
 // POST /api/kinde/callback
 async function handleKindeCallback(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -314,6 +338,16 @@ async function handleKindeCallback(request: Request, env: Env, ctx: ExecutionCon
 
 // POST /api/teams/check (No auth needed)
 async function handleCheckTeam(request: Request, env: Env): Promise<Response> {
+    console.log('Handling /api/teams/check request...');
+    // --- ADDED: Check Collection Status ---
+    const paused = await isCollectionPaused(env);
+    if (paused) {
+        console.log('Collection is paused. Denying team check.');
+        // Return a specific error response indicating collection is paused
+        return apiError('现在的组队已停止，如需更多信息，请访问官网或咨询管理员。', 403); // 403 Forbidden
+    }
+    // --- END ADDED ---
+
     const body = await request.json().catch(() => null);
     if (!body || typeof body.teamCode !== 'string') {
         return apiError('Invalid or missing teamCode in request body.', 400);
@@ -325,7 +359,6 @@ async function handleCheckTeam(request: Request, env: Env): Promise<Response> {
     }
 
     try {
-        // Fetch team and its members
         const teamResult = await env.DB.prepare('SELECT name FROM teams WHERE code = ? LIMIT 1').bind(teamCode).first<{ name: string }>();
 
         if (!teamResult) {
@@ -351,6 +384,15 @@ async function handleCheckTeam(request: Request, env: Env): Promise<Response> {
 
 // POST /api/teams/create (No auth needed)
 async function handleCreateTeam(request: Request, env: Env): Promise<Response> {
+    console.log('Handling /api/teams/create request...');
+    // --- ADDED: Check Collection Status ---
+    const paused = await isCollectionPaused(env);
+    if (paused) {
+        console.log('Collection is paused. Denying team creation.');
+        return apiError('现在的组队已停止，如需更多信息，请访问官网或咨询管理员。', 403); // 403 Forbidden
+    }
+    // --- END ADDED ---
+
     const body = await request.json().catch(() => null);
     if (!body || typeof body.teamCode !== 'string' || typeof body.teamName !== 'string') {
         return apiError('Invalid or missing teamCode or teamName in request body.', 400);
@@ -366,7 +408,6 @@ async function handleCreateTeam(request: Request, env: Env): Promise<Response> {
     }
 
     try {
-        // Check if team code already exists
         const existingTeam = await env.DB.prepare('SELECT 1 FROM teams WHERE code = ? LIMIT 1').bind(teamCode).first();
         if (existingTeam) {
             return apiError(`Team code ${teamCode} already exists.`, 409);
@@ -395,6 +436,18 @@ async function handleCreateTeam(request: Request, env: Env): Promise<Response> {
 
 // POST /api/teams/join (Requires Kinde Auth)
 async function handleJoinTeam(request: Request, env: Env, kindeUserId: string, ctx: ExecutionContext): Promise<Response> {
+    console.log('Handling /api/teams/join request...');
+    // --- ADDED: Check Collection Status ---
+    const paused = await isCollectionPaused(env);
+    if (paused) {
+        console.log('Collection is paused. Denying join.');
+        return apiError('现在的组队已停止，如需更多信息，请访问官网或咨询管理员。', 403); // 403 Forbidden
+    }
+    // --- END ADDED ---
+
+    // Kinde Auth is now handled by middleware before this function is called
+    // kindeUserId is guaranteed to be non-null here
+
     let formData: FormData;
     try { formData = await request.formData(); } catch (e) { return apiError('Invalid request format. Expected multipart/form-data.', 400, e); }
 
@@ -416,7 +469,6 @@ async function handleJoinTeam(request: Request, env: Env, kindeUserId: string, c
      // --- End Validation ---
 
     try {
-         // Use batch for checks
          const teamChecks = await env.DB.batch([
              env.DB.prepare('SELECT name FROM teams WHERE code = ? LIMIT 1').bind(teamCode),
              env.DB.prepare('SELECT COUNT(*) as count FROM members WHERE team_code = ?').bind(teamCode),
@@ -424,36 +476,26 @@ async function handleJoinTeam(request: Request, env: Env, kindeUserId: string, c
              env.DB.prepare('SELECT 1 FROM members WHERE kinde_user_id = ? LIMIT 1').bind(kindeUserId),
              // Check if color or job is already taken in this specific team
              env.DB.prepare('SELECT 1 FROM members WHERE team_code = ? AND (color = ? OR job = ?) LIMIT 1').bind(teamCode, color, job),
-             // Optional: Check if Maimai ID is already taken globally (if you want to enforce this)
-             // env.DB.prepare('SELECT 1 FROM members WHERE maimai_id = ? LIMIT 1').bind(maimaiId),
          ]);
 
          const teamResult = teamChecks[0]?.results?.[0] as { name: string } | undefined;
          const memberCount = (teamChecks[1]?.results?.[0] as { count: number } | undefined)?.count ?? 0;
          const existingMemberWithKindeId = teamChecks[2]?.results?.[0];
          const conflictCheck = teamChecks[3]?.results?.[0];
-         // const existingMemberWithMaimaiId = teamChecks[4]?.results?.[0]; // If checking Maimai ID globally
 
          if (!teamResult) return apiError(`Team with code ${teamCode} not found.`, 404);
          if (memberCount >= 3) return apiError(`Team ${teamCode} is already full (3 members).`, 409);
-         // Conflict if Kinde user already registered
          if (existingMemberWithKindeId) {
              return apiError('你已经报名过了，一个账号只能报名一次。', 409);
          }
-         // Optional: Conflict if Maimai ID taken globally
-         // if (existingMemberWithMaimaiId) {
-         //     return apiError(`Maimai ID '${maimaiId}' is already registered in a team.`, 409);
-         // }
 
          if (conflictCheck) {
-             // Need to query again to find which one is taken for a specific error message
              const colorConflict = await env.DB.prepare('SELECT 1 FROM members WHERE team_code = ? AND color = ? LIMIT 1').bind(teamCode, color).first();
              if (colorConflict) return apiError(`The color '${color}' is already taken in team ${teamCode}.`, 409);
              const jobConflict = await env.DB.prepare('SELECT 1 FROM members WHERE team_code = ? AND job = ? LIMIT 1').bind(teamCode, job).first();
              if (jobConflict) return apiError(`The job '${job}' is already taken in team ${teamCode}.`, 409);
              return apiError(`Color or job is already taken in team ${teamCode}.`, 409);
          }
-
 
          let avatarUrl: string | null = null;
          if (avatarFile instanceof File) {
@@ -467,22 +509,21 @@ async function handleJoinTeam(request: Request, env: Env, kindeUserId: string, c
 
          const now = Math.floor(Date.now() / 1000);
          const insertResult = await env.DB.prepare(
-             'INSERT INTO members (team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, kinde_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)' // ADDED kinde_user_id
+             'INSERT INTO members (team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, kinde_user_id, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)' // ADDED kinde_user_id, is_admin
          )
-         .bind(teamCode, color, job, maimaiId, nickname, qqNumber, avatarUrl, now, kindeUserId) // ADDED kindeUserId
+         // Default is_admin to 0 for user signups
+         .bind(teamCode, color, job, maimaiId, nickname, qqNumber, avatarUrl, now, kindeUserId, 0) // ADDED kindeUserId, 0
          .run();
 
          if (!insertResult.success) {
              console.error('Join team database insert failed:', insertResult.error);
-             // Specific unique constraint errors are handled above
              return apiError('Failed to add member due to a database issue.', 500);
          }
 
-         // Fetch the newly added member to return (optional, but useful)
          const newMemberId = insertResult.meta.last_row_id;
-         const newMember = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id FROM members WHERE id = ?') // Select kinde_user_id too
+         const newMember = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin FROM members WHERE id = ?') // Select kinde_user_id, is_admin too
              .bind(newMemberId)
-             .first<any>(); // Use any or define Member type
+             .first<any>();
 
          return apiResponse({ success: true, message: "Member added successfully.", member: newMember }, 201);
 
@@ -700,18 +741,17 @@ async function handleUserDeleteMember(request: Request, env: Env, kindeUserId: s
 
 // GET /api/members/me (Requires Kinde Auth)
 async function handleFetchMe(request: Request, env: Env, kindeUserId: string): Promise<Response> {
+    console.log('Handling /api/members/me request...');
     try {
         // Find the member record associated with this Kinde User ID
-        const member = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id FROM members WHERE kinde_user_id = ?')
+        const member = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin FROM members WHERE kinde_user_id = ?') // ADDED is_admin
             .bind(kindeUserId)
-            .first<any>(); // Use any or define Member type
+            .first<any>();
 
         if (!member) {
-            // This user is logged in via Kinde but hasn't registered yet
-            return apiResponse({ member: null, message: "User not registered." }, 200); // Return 200 with null member
+            return apiResponse({ member: null, message: "User not registered." }, 200);
         }
 
-        // User is logged in and has a registration
         return apiResponse({ member: member }, 200);
 
     } catch (e) {
@@ -757,18 +797,50 @@ async function handleGetTeamByCode(request: Request, env: Env): Promise<Response
         return apiError('Failed to fetch team information.', 500, e);
     }
 }
-
+// --- Admin Authorization Helper ---
+// Checks if the authenticated Kinde user is marked as admin in the DB
+async function isAdminUser(env: Env, kindeUserId: string): Promise<boolean> {
+    if (!kindeUserId) return false;
+    try {
+        const member = await env.DB.prepare('SELECT is_admin FROM members WHERE kinde_user_id = ? LIMIT 1')
+            .bind(kindeUserId)
+            .first<{ is_admin: number }>();
+        return member?.is_admin === 1;
+    } catch (e) {
+        console.error(`Database error checking admin status for Kinde ID ${kindeUserId}:`, e);
+        return false; // Assume not admin on error
+    }
+}
 
 // --- Admin Route Handlers (Require Admin API Key) ---
+// Middleware to check if the authenticated user is an admin
+async function adminAuthMiddleware(request: Request, env: Env, ctx: ExecutionContext): Promise<string | Response | null> {
+    const kindeUserId = await getAuthenticatedKindeUser(request, env);
+    if (!kindeUserId) {
+        console.warn('Admin access denied: User not authenticated via Kinde.');
+        return apiError('Authentication required.', 401);
+    }
+
+    const isAdmin = await isAdminUser(env, kindeUserId);
+    if (!isAdmin) {
+        console.warn(`Admin access denied: User ${kindeUserId} is not an admin.`);
+        return apiError('Authorization failed: You do not have administrator privileges.', 403);
+    }
+
+    // If authenticated and is admin, return the kindeUserId to the handler
+    return kindeUserId;
+}
 
 // GET /api/admin/members
-async function handleAdminFetchMembers(request: Request, env: Env): Promise<Response> {
-    // Admin authentication already checked by middleware
+async function handleAdminFetchMembers(request: Request, env: Env, kindeUserId: string): Promise<Response> {
+    console.log(`Admin user ${kindeUserId} fetching all members...`);
+    // Admin authentication and isAdmin check already done by middleware
+
     try {
-        // Fetch all members, including kinde_user_id
+        // Fetch all members, including kinde_user_id and is_admin
         const allMembers = await env.DB.prepare(
-            'SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id FROM members ORDER BY team_code ASC, joined_at ASC' // ADDED kinde_user_id
-        ).all<any>(); // Use any or define Member type
+            'SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin FROM members ORDER BY team_code ASC, joined_at ASC' // ADDED is_admin
+        ).all<any>();
         return apiResponse({ members: allMembers.results || [] }, 200);
     } catch (e) {
         console.error('Database error fetching all members for admin:', e);
@@ -777,20 +849,21 @@ async function handleAdminFetchMembers(request: Request, env: Env): Promise<Resp
 }
 
 // POST /api/admin/members
-async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Admin authentication already checked by middleware
+async function handleAdminAddMember(request: Request, env: Env, kindeUserId: string, ctx: ExecutionContext): Promise<Response> {
+    console.log(`Admin user ${kindeUserId} adding member...`);
+    // Admin authentication and isAdmin check already done by middleware
 
     let formData: FormData;
     try { formData = await request.formData(); } catch (e) { return apiError('Invalid request format. Expected multipart/form-data.', 400, e); }
 
-    // Admin can provide all fields, including kinde_user_id
+    // Admin can provide all fields, including kinde_user_id (but NOT is_admin via this endpoint for security)
     const teamCode = formData.get('teamCode')?.toString();
     const color = formData.get('color')?.toString();
     const job = formData.get('job')?.toString();
     const maimaiId = formData.get('maimaiId')?.toString()?.trim();
     const nickname = formData.get('nickname')?.toString()?.trim();
     const qqNumber = formData.get('qqNumber')?.toString()?.trim();
-    const kindeUserId = formData.get('kindeUserId')?.toString()?.trim() || null; // ADDED: Admin can provide Kinde ID (optional)
+    const memberKindeUserId = formData.get('kindeUserId')?.toString()?.trim() || null; // Kinde ID for the *new* member (optional)
     const avatarFile = formData.get('avatarFile');
 
      // --- Input Validation ---
@@ -800,8 +873,8 @@ async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionCo
      if (!maimaiId || maimaiId.length === 0 || maimaiId.length > 13) return apiError('Maimai ID is required (1-13 chars).', 400);
      if (!nickname || nickname.length === 0 || nickname.length > 50) return apiError('Nickname is required (1-50 chars).', 400);
      if (!qqNumber || !/^[1-9][0-9]{4,14}$/.test(qqNumber)) return apiError('A valid QQ number is required.', 400);
-     // Optional: Validate kindeUserId format if you have one
-     // if (kindeUserId && !isValidKindeIdFormat(kindeUserId)) return apiError('Invalid Kinde User ID format.', 400);
+     // Optional: Validate memberKindeUserId format if you have one
+     // if (memberKindeUserId && !isValidKindeIdFormat(memberKindeUserId)) return apiError('Invalid Kinde User ID format.', 400);
 
 
     try {
@@ -812,15 +885,14 @@ async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionCo
         // Check for conflicts (maimai_id globally, kinde_user_id globally, color/job in team)
         const conflictChecks = await env.DB.batch([
             env.DB.prepare('SELECT 1 FROM members WHERE maimai_id = ? LIMIT 1').bind(maimaiId),
-            // ADDED: Check if kinde_user_id is already taken globally (if provided)
-            kindeUserId ? env.DB.prepare('SELECT 1 FROM members WHERE kinde_user_id = ? LIMIT 1').bind(kindeUserId) : env.DB.prepare('SELECT 0'), // Dummy query if no kindeUserId
+            // Check if kinde_user_id is already taken globally (if provided)
+            memberKindeUserId ? env.DB.prepare('SELECT 1 FROM members WHERE kinde_user_id = ? LIMIT 1').bind(memberKindeUserId) : env.DB.prepare('SELECT 0'), // Dummy query if no kindeUserId
             env.DB.prepare('SELECT 1 FROM members WHERE team_code = ? AND color = ? LIMIT 1').bind(teamCode, color),
             env.DB.prepare('SELECT 1 FROM members WHERE team_code = ? AND job = ? LIMIT 1').bind(teamCode, job),
         ]);
 
         if (conflictChecks[0]?.results?.[0]) return apiError(`Maimai ID '${maimaiId}' is already registered.`, 409);
-        // ADDED: Kinde ID conflict check
-        if (kindeUserId && conflictChecks[1]?.results?.[0]) return apiError(`Kinde User ID '${kindeUserId}' is already registered.`, 409);
+        if (memberKindeUserId && conflictChecks[1]?.results?.[0]) return apiError(`Kinde User ID '${memberKindeUserId}' is already registered.`, 409);
         if (conflictChecks[2]?.results?.[0]) return apiError(`The color '${color}' is already taken in team ${teamCode}.`, 409);
         if (conflictChecks[3]?.results?.[0]) return apiError(`The job '${job}' is already taken in team ${teamCode}.`, 409);
 
@@ -828,8 +900,8 @@ async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionCo
         let avatarUrl: string | null = null;
         if (avatarFile instanceof File) {
              // Use Maimai ID or Kinde ID for avatar path
-             const idForAvatarPath = kindeUserId || maimaiId; // Use kindeId if provided, else maimaiId
-             avatarUrl = await uploadAvatar(env, avatarFile, idForAvatarPath, teamCode); // MODIFIED: Use idForAvatarPath
+             const idForAvatarPath = memberKindeUserId || maimaiId; // Use kindeId if provided, else maimaiId
+             avatarUrl = await uploadAvatar(env, avatarFile, idForAvatarPath, teamCode);
               if (avatarUrl === null) {
                  console.warn(`Admin add blocked for ${maimaiId}: Avatar upload failed.`);
                  return apiError('Failed to upload avatar. Member not added.', 500);
@@ -838,9 +910,10 @@ async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionCo
 
         const now = Math.floor(Date.now() / 1000);
         const insertResult = await env.DB.prepare(
-            'INSERT INTO members (team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)' // ADDED kinde_user_id
+            'INSERT INTO members (team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)' // ADDED kinde_user_id, is_admin
         )
-        .bind(teamCode, color, job, maimaiId, nickname, qqNumber, avatarUrl, now, now, kindeUserId) // ADDED kindeUserId
+        // Admin adds members with is_admin = 0 by default. Admin status is managed separately.
+        .bind(teamCode, color, job, maimaiId, nickname, qqNumber, avatarUrl, now, now, memberKindeUserId, 0) // ADDED memberKindeUserId, 0
         .run();
 
         if (!insertResult.success) {
@@ -849,9 +922,9 @@ async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionCo
         }
 
         const newMemberId = insertResult.meta.last_row_id;
-        const newMember = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id FROM members WHERE id = ?') // Select kinde_user_id
+        const newMember = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin FROM members WHERE id = ?') // Select kinde_user_id, is_admin
             .bind(newMemberId)
-            .first<any>(); // Use any or define Member type
+            .first<any>();
 
         return apiResponse({ success: true, message: "Member added successfully.", member: newMember }, 201);
 
@@ -866,8 +939,9 @@ async function handleAdminAddMember(request: Request, env: Env, ctx: ExecutionCo
 }
 
 // PATCH /api/admin/members/:id
-async function handleAdminPatchMember(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Admin authentication already checked by middleware
+async function handleAdminPatchMember(request: Request, env: Env, kindeUserId: string, ctx: ExecutionContext): Promise<Response> {
+    console.log(`Admin user ${kindeUserId} patching member...`);
+    // Admin authentication and isAdmin check already done by middleware
 
     const parts = new URL(request.url).pathname.split('/');
      if (parts.length !== 5 || !parts[4]) { return apiError('Invalid API path. Use /api/admin/members/:id', 400); }
@@ -877,28 +951,28 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
     let formData: FormData;
     try { formData = await request.formData(); } catch (e) { return apiError('Invalid request format for update. Expected multipart/form-data.', 400, e); }
 
-    // Fetch existing member by ID (Admin bypasses Kinde ID auth here)
+    // Fetch existing member by ID
     const existingMember = await env.DB.prepare('SELECT * FROM members WHERE id = ?')
         .bind(targetMemberId)
-        .first<any>(); // Use any or define Member type
+        .first<any>();
 
     if (!existingMember) { return apiError(`Member with ID ${targetMemberId} not found.`, 404); }
 
     // Prepare updates
-    const updates: Partial<any> = {}; // Use any or define Member type
+    const updates: Partial<any> = {};
     const setClauses: string[] = [];
     const params: (string | number | null)[] = [];
     let newAvatarUrl: string | null | undefined = undefined;
     let oldAvatarUrlToDelete: string | null | undefined = undefined;
 
-    // Admin can update all fields
+    // Admin can update all fields EXCEPT is_admin via this endpoint
     const newTeamCode = formData.get('teamCode')?.toString();
     const newMaimaiId = formData.get('maimaiId')?.toString()?.trim();
     const newNickname = formData.get('nickname')?.toString()?.trim();
     const newQqNumber = formData.get('qqNumber')?.toString()?.trim();
     const newColor = formData.get('color')?.toString();
     const newJob = formData.get('job')?.toString();
-    const newKindeUserId = formData.get('kindeUserId')?.toString()?.trim() || null; // ADDED: Admin can update Kinde ID
+    const newKindeUserId = formData.get('kindeUserId')?.toString()?.trim() || null; // Admin can update Kinde ID
     const newAvatarFile = formData.get('avatarFile');
     const clearAvatar = formData.get('clearAvatar')?.toString() === 'true';
 
@@ -931,12 +1005,8 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
         updates.qq_number = newQqNumber; setClauses.push('qq_number = ?'); params.push(newQqNumber);
     }
 
-    // Kinde User ID (ADDED)
+    // Kinde User ID
     if (newKindeUserId !== null && newKindeUserId !== undefined && newKindeUserId !== existingMember.kinde_user_id) {
-         // Optional: Validate format if you have one
-         // if (newKindeUserId && !isValidKindeIdFormat(newKindeUserId)) return apiError('Invalid Kinde User ID format.', 400);
-
-         // Check if the new Kinde User ID is already taken by *another* member (if not null)
          if (newKindeUserId) {
              const conflictCheck = await env.DB.prepare('SELECT 1 FROM members WHERE kinde_user_id = ? AND id != ? LIMIT 1')
                  .bind(newKindeUserId, targetMemberId)
@@ -949,11 +1019,11 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
     }
 
     // Color (Check conflict in the *new* team if teamCode changed, otherwise in the current team)
-    const teamCodeForConflictCheck = updates.team_code || existingMember.team_code; // Use new teamCode if changed
+    const teamCodeForConflictCheck = updates.team_code || existingMember.team_code;
     if (newColor !== null && newColor !== undefined && newColor !== existingMember.color) {
         if (!['red', 'green', 'blue'].includes(newColor)) return apiError('Invalid new color selection.', 400);
         const conflictCheck = await env.DB.prepare(
-                'SELECT 1 FROM members WHERE team_code = ? AND color = ? AND id != ? LIMIT 1' // Check against other members by ID
+                'SELECT 1 FROM members WHERE team_code = ? AND color = ? AND id != ? LIMIT 1'
             )
             .bind(teamCodeForConflictCheck, newColor, targetMemberId)
             .first();
@@ -965,7 +1035,7 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
    if (newJob !== null && newJob !== undefined && newJob !== existingMember.job) {
         if (!['attacker', 'defender', 'supporter'].includes(newJob)) return apiError('Invalid new job selection.', 400);
          const conflictCheck = await env.DB.prepare(
-                 'SELECT 1 FROM members WHERE team_code = ? AND job = ? AND id != ? LIMIT 1' // Check against other members by ID
+                 'SELECT 1 FROM members WHERE team_code = ? AND job = ? AND id != ? LIMIT 1'
             )
             .bind(teamCodeForConflictCheck, newJob, targetMemberId)
             .first();
@@ -979,10 +1049,8 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
          if (existingMember.avatar_url) { oldAvatarUrlToDelete = existingMember.avatar_url; }
     } else if (newAvatarFile instanceof File) {
        console.log(`Processing new avatar file upload for member ID ${targetMemberId}`);
-       // Use the *new* team code for the R2 path if it was changed, otherwise use the existing one
        const teamCodeForAvatarPath = updates.team_code || existingMember.team_code;
-       // Use the *new* maimai ID or kinde ID for the R2 key
-       const idForAvatarKey = updates.kinde_user_id || existingMember.kinde_user_id || updates.maimai_id || existingMember.maimai_id; // Prioritize Kinde ID
+       const idForAvatarKey = updates.kinde_user_id || existingMember.kinde_user_id || updates.maimai_id || existingMember.maimai_id;
        const uploadedUrl = await uploadAvatar(env, newAvatarFile, idForAvatarKey, teamCodeForAvatarPath);
        if (uploadedUrl === null) { return apiError('Avatar upload failed. Member update cancelled.', 500); }
        newAvatarUrl = uploadedUrl; updates.avatar_url = newAvatarUrl;
@@ -1002,11 +1070,7 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
    console.log(`Executing admin update for ID ${targetMemberId}: ${updateQuery} with params: ${JSON.stringify(params.slice(0, -1))}`);
 
    try {
-       // Delete old avatar asynchronously if needed
-       if (oldAvatarUrlToDelete) {
-            console.log(`Attempting to delete old avatar: ${oldAvatarUrlToDelete}`);
-            ctx.waitUntil(deleteAvatarFromR2(env, oldAvatarUrlToDelete));
-       }
+       if (oldAvatarUrlToDelete) { ctx.waitUntil(deleteAvatarFromR2(env, oldAvatarUrlToDelete)); }
 
         const updateResult = await env.DB.prepare(updateQuery).bind(...params).run();
 
@@ -1022,22 +1086,19 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
             console.warn(`Admin update query executed for ID ${targetMemberId} but no rows were changed.`);
             const checkExists = await env.DB.prepare('SELECT 1 FROM members WHERE id = ?').bind(targetMemberId).first();
             if (!checkExists) return apiError('Failed to update: Member record not found.', 404);
-            return apiResponse({ message: "No changes detected or record unchanged.", member: existingMember }, 200); // Or 400 if no changes were sent
+            return apiResponse({ message: "No changes detected or record unchanged.", member: existingMember }, 200);
         }
 
         console.log(`Successfully updated member ID ${targetMemberId}. Changes: ${updateResult.meta.changes}`);
 
-        // If team code was changed, check if the OLD team is now empty and delete it asynchronously
         if (updates.team_code && updates.team_code !== existingMember.team_code) {
             console.log(`Team code changed from ${existingMember.team_code} to ${updates.team_code}. Checking old team.`);
             ctx.waitUntil(checkAndDeleteEmptyTeam(env, existingMember.team_code));
         }
 
-
-        // Fetch the *updated* member data to return
-        const updatedMember = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id FROM members WHERE id = ?') // Select kinde_user_id
+        const updatedMember = await env.DB.prepare('SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin FROM members WHERE id = ?') // Select kinde_user_id, is_admin
             .bind(targetMemberId)
-            .first<any>(); // Use any or define Member type
+            .first<any>();
 
         if (!updatedMember) {
               console.error(`Consistency issue: Member ID ${targetMemberId} updated but could not be re-fetched.`);
@@ -1057,15 +1118,15 @@ async function handleAdminPatchMember(request: Request, env: Env, ctx: Execution
 }
 
 // DELETE /api/admin/members/:id
-async function handleAdminDeleteMember(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Admin authentication already checked by middleware
+async function handleAdminDeleteMember(request: Request, env: Env, kindeUserId: string, ctx: ExecutionContext): Promise<Response> {
+    console.log(`Admin user ${kindeUserId} deleting member...`);
+    // Admin authentication and isAdmin check already done by middleware
 
     const parts = new URL(request.url).pathname.split('/');
     if (parts.length !== 5 || !parts[4]) { return apiError('Invalid API path. Use /api/admin/members/:id', 400); }
     const targetMemberId = parseInt(parts[4]);
     if (isNaN(targetMemberId)) { return apiError('Invalid member ID format in path.', 400); }
 
-    // Fetch member by ID to get team_code and avatar_url before deleting
     const existingMember = await env.DB.prepare('SELECT id, team_code, avatar_url FROM members WHERE id = ?')
         .bind(targetMemberId)
         .first<{ id: number, team_code: string, avatar_url?: string | null }>();
@@ -1094,16 +1155,13 @@ async function handleAdminDeleteMember(request: Request, env: Env, ctx: Executio
         }
         console.log(`Successfully deleted member record for ID ${targetMemberId}.`);
 
-        // Delete associated avatar asynchronously
         if (avatarUrlToDelete) {
              console.log(`Attempting to delete associated avatar: ${avatarUrlToDelete}`);
              ctx.waitUntil(deleteAvatarFromR2(env, avatarUrlToDelete));
         }
 
-       // Check and delete empty team asynchronously
        ctx.waitUntil(checkAndDeleteEmptyTeam(env, teamCode));
 
-       // Return 204 No Content on successful deletion
        return new Response(null, { status: 204, headers: CORS_HEADERS });
 
     } catch (deleteProcessError) {
@@ -1117,14 +1175,15 @@ async function handleAdminDeleteMember(request: Request, env: Env, ctx: Executio
 }
 
 // GET /api/admin/export/csv
-async function handleAdminExportCsv(request: Request, env: Env): Promise<Response> {
-    // Admin authentication already checked by middleware
+async function handleAdminExportCsv(request: Request, env: Env, kindeUserId: string): Promise<Response> {
+    console.log(`Admin user ${kindeUserId} exporting CSV...`);
+    // Admin authentication and isAdmin check already done by middleware
 
     try {
-        // Fetch all members, including kinde_user_id
+        // Fetch all members, including kinde_user_id and is_admin
         const allMembersResult = await env.DB.prepare(
-            'SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id FROM members ORDER BY team_code ASC, joined_at ASC' // ADDED kinde_user_id
-        ).all<any>(); // Use any or define Member type
+            'SELECT id, team_code, color, job, maimai_id, nickname, qq_number, avatar_url, joined_at, updated_at, kinde_user_id, is_admin FROM members ORDER BY team_code ASC, joined_at ASC' // ADDED is_admin
+        ).all<any>();
 
         const members = allMembersResult.results || [];
 
@@ -1133,7 +1192,7 @@ async function handleAdminExportCsv(request: Request, env: Env): Promise<Respons
         }
 
         // Generate CSV content
-        const headers = ['ID', '队伍码', '颜色', '职业', '舞萌ID', '称呼', 'QQ号', 'Kinde用户ID', '头像URL', '加入时间', '更新时间']; // ADDED Kinde用户ID header
+        const headers = ['ID', '队伍码', '颜色', '职业', '舞萌ID', '称呼', 'QQ号', 'Kinde用户ID', '是否管理员', '头像URL', '加入时间', '更新时间']; // ADDED Kinde用户ID, 是否管理员
         let csvContent = headers.join(',') + '\n';
 
         members.forEach(member => {
@@ -1154,7 +1213,8 @@ async function handleAdminExportCsv(request: Request, env: Env): Promise<Respons
                 escapeCsv(member.maimai_id),
                 escapeCsv(member.nickname),
                 escapeCsv(member.qq_number),
-                escapeCsv(member.kinde_user_id || ''), // ADDED Kinde User ID
+                escapeCsv(member.kinde_user_id || ''),
+                escapeCsv(member.is_admin === 1 ? '是' : '否'), // ADDED is_admin text
                 escapeCsv(member.avatar_url || ''),
                 escapeCsv(formatTimestamp(member.joined_at)),
                 escapeCsv(formatTimestamp(member.updated_at)),
@@ -1178,6 +1238,37 @@ async function handleAdminExportCsv(request: Request, env: Env): Promise<Respons
     } catch (e) {
         console.error('Database or processing error during CSV export:', e);
         return apiError('Failed to generate CSV export.', 500, e);
+    }
+}
+
+// POST /api/admin/settings/toggle-collection (NEW Admin Endpoint)
+async function handleAdminToggleCollection(request: Request, env: Env, kindeUserId: string): Promise<Response> {
+    console.log(`Admin user ${kindeUserId} toggling collection status...`);
+    // Admin authentication and isAdmin check already done by middleware
+
+    try {
+        // Get current status
+        const currentStatus = await isCollectionPaused(env);
+        const newStatus = !currentStatus; // Toggle it
+
+        // Update the setting in the database
+        const updateResult = await env.DB.prepare(
+            'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+        )
+        .bind('collection_paused', newStatus ? 'true' : 'false')
+        .run();
+
+        if (!updateResult.success) {
+            console.error('Database error toggling collection_paused setting:', updateResult.error);
+            return apiError('Failed to toggle collection status due to a database issue.', 500);
+        }
+
+        console.log(`Collection status toggled to: ${newStatus}`);
+        return apiResponse({ success: true, collection_paused: newStatus, message: `Collection status set to ${newStatus ? 'paused' : 'active'}.` }, 200);
+
+    } catch (e) {
+        console.error('Error toggling collection status:', e);
+        return apiError('Failed to toggle collection status.', 500, e);
     }
 }
 
@@ -1237,9 +1328,7 @@ export default {
 
         // --- 1. Handle CORS Preflight Request (OPTIONS) ---
         if (request.method === 'OPTIONS') {
-            // Ensure Allow-Credentials header is included in OPTIONS response if needed
             const headers = new Headers(CORS_HEADERS);
-            // headers.set('Access-Control-Allow-Credentials', 'true'); // Already included in CORS_HEADERS constant
             return new Response(null, {
                 status: 204,
                 headers: headers
@@ -1251,75 +1340,120 @@ export default {
         const method = request.method;
         console.log(`[Request] ${method} ${pathname}`);
 
-        // --- 2. Admin Endpoint Authentication Check (API Key) ---
+        // --- 2. Admin Endpoint Authentication & Authorization Middleware ---
+        // Check Kinde auth and isAdmin status for all /api/admin/* routes
         if (pathname.startsWith('/api/admin/')) {
-            if (!isAdminAuthenticated(request, env)) {
-                return apiError('Authentication failed.', 401);
+            const authResult = await adminAuthMiddleware(request, env, ctx);
+            if (authResult instanceof Response) {
+                // Middleware returned an error response (401 or 403)
+                return authResult;
+            }
+            // Middleware returned the kindeUserId, pass it to the handler
+            const kindeUserId = authResult as string;
+
+            // Now route the admin requests
+            try {
+                if (method === 'GET' && pathname === '/api/admin/members') {
+                    return handleAdminFetchMembers(request, env, kindeUserId);
+                }
+                else if (method === 'POST' && pathname === '/api/admin/members') {
+                    return handleAdminAddMember(request, env, kindeUserId, ctx);
+                }
+                else if (method === 'PATCH' && pathname.startsWith('/api/admin/members/')) {
+                    return handleAdminPatchMember(request, env, kindeUserId, ctx);
+                }
+                else if (method === 'DELETE' && pathname.startsWith('/api/admin/members/')) {
+                    return handleAdminDeleteMember(request, env, kindeUserId, ctx);
+                }
+                else if (method === 'GET' && pathname === '/api/admin/export/csv') {
+                    return handleAdminExportCsv(request, env, kindeUserId);
+                }
+                 // NEW Admin Setting Endpoint
+                 else if (method === 'POST' && pathname === '/api/admin/settings/toggle-collection') {
+                     return handleAdminToggleCollection(request, env, kindeUserId);
+                 }
+                else {
+                    // No matching admin route found
+                    return apiError('Admin endpoint not found.', 404);
+                }
+            } catch (adminRouteError) {
+                 console.error(`Error in admin route handler for ${method} ${pathname}:`, adminRouteError);
+                 return apiError('An internal server error occurred in the admin handler.', 500, adminRouteError);
             }
         }
+        // --- End Admin Auth & Authz Check ---
+
 
         try {
-            // --- 3. Kinde Authentication Middleware for User Routes ---
+            // --- 3. Kinde Authentication Middleware for Standard User Routes ---
             const protectedUserPaths = [
                 '/api/teams/join',
                 '/api/members/', // Covers PATCH and DELETE by maimaiId
                 '/api/members/me',
             ];
             // Exclude logout from this check
-            const isProtectedUserRoute = protectedUserPaths.some(p => pathname.startsWith(p)) && pathname !== '/api/logout'; // Exclude logout
+            const isProtectedUserRoute = protectedUserPaths.some(p => pathname.startsWith(p)) && pathname !== '/api/logout';
 
             let kindeUserId: string | null = null;
             if (isProtectedUserRoute) {
                  kindeUserId = await getAuthenticatedKindeUser(request, env);
                  if (!kindeUserId) {
+                     // Return 401 if no token/invalid token for protected user routes
                      return apiError('Authentication required.', 401);
                  }
+                 // kindeUserId is now available for the user route handlers below
              }
+            // --- End Kinde Authentication Middleware ---
 
-            // --- 4. Routing Logic ---
+
+            // --- 4. Routing Logic (Public and Authenticated User Routes) ---
 
             // Kinde Callback Endpoint
             if (method === 'POST' && pathname === '/api/kinde/callback') {
                 return handleKindeCallback(request, env, ctx);
             }
 
-            // *** ADDED: Logout Route ***
+            // Kinde Logout Endpoint
             else if (method === 'POST' && pathname === '/api/logout') {
                  return handleLogout(request, env, ctx);
             }
-            // *** END ADDED: Logout Route ***
 
-            // Public Team Check
+            // Public Settings Endpoint (NEW)
+            else if (method === 'GET' && pathname === '/api/settings') {
+                 return handleGetSettings(request, env);
+            }
+
+            // Public Team Check (MODIFIED to check collection status)
             else if (method === 'POST' && pathname === '/api/teams/check') {
                 return handleCheckTeam(request, env);
             }
 
-            // Public Team Create
+            // Public Team Create (MODIFIED to check collection status)
             else if (method === 'POST' && pathname === '/api/teams/create') {
                 return handleCreateTeam(request, env);
             }
 
-            // User Join Team (Requires Kinde Auth)
+            // User Join Team (Requires Kinde Auth, MODIFIED to check collection status)
             else if (method === 'POST' && pathname === '/api/teams/join') {
-                 if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check just in case
+                 if (!kindeUserId) return apiError('Authentication required.', 401);
                  return handleJoinTeam(request, env, kindeUserId, ctx);
             }
 
             // User Patch Member (Requires Kinde Auth)
             else if (method === 'PATCH' && pathname.startsWith('/api/members/')) {
-                 if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check
+                 if (!kindeUserId) return apiError('Authentication required.', 401);
                  return handleUserPatchMember(request, env, kindeUserId, ctx);
             }
 
            // User Delete Member (Requires Kinde Auth)
            else if (method === 'DELETE' && pathname.startsWith('/api/members/')) {
-               if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check
+               if (!kindeUserId) return apiError('Authentication required.', 401);
                return handleUserDeleteMember(request, env, kindeUserId, ctx);
            }
 
-           // Fetch Current User's Member Info (Requires Kinde Auth)
+           // Fetch Current User's Member Info (Requires Kinde Auth, MODIFIED to return is_admin)
            else if (method === 'GET' && pathname === '/api/members/me') {
-               if (!kindeUserId) return apiError('Authentication required.', 401); // Re-check
+               if (!kindeUserId) return apiError('Authentication required.', 401);
                return handleFetchMe(request, env, kindeUserId);
            }
 
@@ -1328,31 +1462,13 @@ export default {
                return handleGetTeamByCode(request, env);
            }
 
-           // --- Admin Endpoints (Admin Auth already checked) ---
-           // ... (Keep existing admin route conditions) ...
-           else if (method === 'GET' && pathname === '/api/admin/members') {
-               return handleAdminFetchMembers(request, env);
-           }
-           else if (method === 'POST' && pathname === '/api/admin/members') {
-               return handleAdminAddMember(request, env, ctx);
-           }
-           else if (method === 'PATCH' && pathname.startsWith('/api/admin/members/')) {
-               return handleAdminPatchMember(request, env, ctx);
-           }
-           else if (method === 'DELETE' && pathname.startsWith('/api/admin/members/')) {
-               return handleAdminDeleteMember(request, env, ctx);
-           }
-           else if (method === 'GET' && pathname === '/api/admin/export/csv') {
-               return handleAdminExportCsv(request, env);
-           }
-
 
            // --- 5. 404 Catch All ---
            else {
                return apiError('Endpoint not found.', 404);
            }
 
-       } catch (globalError) {
+       } catch (globalError) { // Catch any unexpected errors not handled by specific routes
            console.error('Unhandled exception in Worker:', globalError);
            return apiError(
                'An unexpected internal server error occurred.',

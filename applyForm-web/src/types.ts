@@ -1,29 +1,32 @@
-// src/types.ts
+// types.ts
 
-// Define the structure of a Kinde user object as needed by the frontend
+export interface Member {
+    id: number;
+    team_code: string;
+    color: 'red' | 'green' | 'blue';
+    job: 'attacker' | 'defender' | 'supporter';
+    maimai_id: string;
+    nickname: string;
+    qq_number: string;
+    avatar_url: string | null;
+    joined_at: number; // Unix timestamp
+    updated_at: number; // Unix timestamp
+    kinde_user_id: string | null; // Kinde user ID
+    is_admin: number; // ADDED: 0 or 1
+}
+
+export interface Team {
+    code: string;
+    name: string;
+    created_at: number; // Unix timestamp
+}
+
+// Basic Kinde User info (can be extended based on scopes)
 export interface KindeUser {
     id: string; // Kinde user ID (sub claim)
-    email: string | null;
-    name: string | null; // Full name
-    given_name?: string | null; // First name
-    family_name?: string | null; // Last name
-    // Add any other Kinde user properties you use
+    email: string;
+    name: string; // Full name
+    given_name?: string;
+    family_name?: string;
+    // Add other claims you request (e.g., picture, etc.)
 }
-
-// Define the structure of a Member object from your backend
-export interface Member {
-    id: number; // Database ID for the member entry
-    kinde_user_id: string; // Kinde user ID associated with this member
-    team_code: string; // The 4-digit team code
-    color: 'red' | 'green' | 'blue'; // Member's chosen color
-    job: 'attacker' | 'defender' | 'supporter'; // Member's chosen job
-    maimai_id: string; // Maimai ID
-    nickname: string; // Member's nickname
-    qq_number: string; // Member's QQ number
-    avatar_url: string | null; // URL to the member's avatar (can be null)
-    created_at: string; // Timestamp
-    updated_at: string; // Timestamp
-    // Add any other properties your backend Member object has
-}
-
-// You can add other shared types here if needed
