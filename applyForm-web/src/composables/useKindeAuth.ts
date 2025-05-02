@@ -91,8 +91,12 @@ async function fetchUserMember(): Promise<void> {
             isAuthenticated.value = true; // Backend returned 200, means token was valid
             console.log("Backend /members/me returned OK. User is authenticated.");
 
-            // Now fetch Kinde user info using the *valid* access token (backend validated it)
-            await fetchKindeUserInfo();
+            // REMOVED: await fetchKindeUserInfo(); // No longer calling this problematic function here
+
+            // Optional: If you *really* need the Kinde name/email later,
+            // you could potentially parse it from the ID token if the backend returned it,
+            // or make a separate call *only when needed*, but for checkAuthStatus, it's not required.
+            // For now, kindeUser might remain null, which is fine.
 
         } else if (response.status === 401) {
             console.warn("Backend /members/me returned 401. User is not authenticated.");
@@ -116,6 +120,7 @@ async function fetchUserMember(): Promise<void> {
         userMember.value = null;
     }
 }
+
 
 async function fetchKindeUserInfo(): Promise<void> {
      if (!isAuthenticated.value) {
