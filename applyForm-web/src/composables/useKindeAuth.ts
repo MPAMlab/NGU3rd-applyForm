@@ -21,13 +21,15 @@ const kindeConfig = {
 const isAuthenticated: Ref<boolean> = ref(false);
 const kindeUser: Ref<KindeUser | null> = ref(null);
 const userMember: Ref<Member | null> = ref(null);
-const authStatusChecked: Ref<boolean> = ref(false);
+const authStatusChecked: Ref<boolean> = ref(false); // Flag to ensure checkAuthStatus runs only once per page load
 
 // --- Constants for PKCE and State ---
 const PKCE_VERIFIER_STORAGE_KEY = 'kinde_pkce_code_verifier';
 const STATE_STORAGE_KEY = 'kinde_oauth_state';
+// We still define these names, but frontend JS won't read HttpOnly cookies directly
 const ACCESS_TOKEN_COOKIE_NAME = 'kinde_access_token';
 const REFRESH_TOKEN_COOKIE_NAME = 'kinde_refresh_token';
+
 
 // --- Helper Functions for PKCE ---
 
@@ -79,107 +81,86 @@ function base64urlencodeArrayBuffer(buffer: ArrayBuffer): string {
 
 // --- Core Authentication Logic ---
 
+// MODIFIED: checkAuthStatus now relies on fetchUserMember to determine auth state
 async function checkAuthStatus(): Promise<void> {
+    // Prevent running multiple times on the same page load unless explicitly needed
     if (authStatusChecked.value) {
         return;
     }
     authStatusChecked.value = true;
 
-    console.log("Checking Kinde auth status...");
+    console.log("Checking Kinde auth status via backend /members/me...");
 
-    const accessToken = Cookies.get(ACCESS_TOKEN_COOKIE_NAME);
+    // Call the backend endpoint. The browser will automatically send HttpOnly cookies.
+    // fetchUserMember will update isAuthenticated, kindeUser, and userMember based on the backend response.
+    await fetchUserMember();
 
-    if (accessToken) {
-        isAuthenticated.value = true;
-        console.log("Access token found. User is authenticated.");
-
-        // Fetch the user's member data from your backend
-        // This function will update userMember.value internally
-        await fetchUserMember();
-
-        // If userMember is still null after fetch, try fetching Kinde user info directly
-        // (This might happen if the user is logged in via Kinde but hasn't registered a member record yet)
-        if (!userMember.value) {
-             await fetchKindeUserInfo();
-        }
-
-
-    } else {
-        isAuthenticated.value = false;
-        kindeUser.value = null;
-        userMember.value = null; // Ensure userMember is null if not authenticated
-        console.log("No access token found. User is not authenticated.");
-    }
+    console.log(`Auth status check complete. isAuthenticated: ${isAuthenticated.value}, userMember: ${userMember.value !== null}`);
 }
 
-// ADDED: Function to fetch user member data and update state
+// MODIFIED: fetchUserMember now determines isAuthenticated state based on backend response
 async function fetchUserMember(): Promise<void> {
-    if (!isAuthenticated.value) {
-        userMember.value = null;
-        return;
-    }
-
-    console.log("Fetching user member data...");
+    console.log("Fetching user member data from backend /members/me...");
     try {
-        const response = await authenticatedFetch(`${import.meta.env.VITE_API_BASE_URL}/members/me`);
+        // Use standard fetch. The browser automatically includes HttpOnly cookies for the domain.
+        // We don't need authenticatedFetch here because this is the function that *sets* the auth state.
+        // authenticatedFetch relies on isAuthenticated being set already.
+        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/members/me`);
 
         if (response.ok) {
             const data = await response.json();
+            // Backend returns { member: Member | null }
             userMember.value = data.member as Member | null; // Update state internally
-            console.log("User member data fetched:", userMember.value);
-             // If member exists, we can potentially get Kinde user info from it
-             if (userMember.value && userMember.value.kinde_user_id) {
-                  // This is a basic placeholder. Full user info (name, email)
-                  // should ideally come from Kinde's ID token or /userinfo endpoint.
-                  // For now, we just set the ID.
-                  // We should ideally fetch full info if needed, or rely on ID token claims.
-                  // Let's fetch full info for consistency.
-                  await fetchKindeUserInfo(); // Fetch full Kinde user info
-             } else {
-                  // User is authenticated but has no member record yet
-                  // We still need the Kinde user ID for registration
-                  await fetchKindeUserInfo(); // Fetch full Kinde user info
-             }
+
+            // If the backend returned 200, it means it successfully validated the token (cookie)
+            // and determined the user's status (whether they have a member record or not).
+            // So, the user is authenticated via Kinde.
+            isAuthenticated.value = true;
+            console.log("Backend /members/me returned OK. User is authenticated.");
+
+            // Now fetch Kinde user info using the *valid* access token (backend validated it)
+            // This is still needed to get name/email for kindeUser state
+            await fetchKindeUserInfo(); // This will update kindeUser.value
+
         } else if (response.status === 401) {
-             console.warn("Failed to fetch user member data: Authentication failed (401). Clearing auth state.");
-             // Clear auth state if token is invalid
-             isAuthenticated.value = false;
-             kindeUser.value = null;
-             userMember.value = null; // Update state internally
-             Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
-             Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
-             // Optional: Redirect to login or show login prompt
+            console.warn("Backend /members/me returned 401. User is not authenticated.");
+            // Backend determined token is invalid or missing
+            isAuthenticated.value = false;
+            kindeUser.value = null;
+            userMember.value = null;
+            // Clear cookies client-side (best effort for non-HttpOnly, but good practice)
+            Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
+            Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
+            // Optional: Redirect to login or show login prompt
         }
         else {
             console.error("Failed to fetch user member data:", response.status, await response.text());
-            userMember.value = null; // Update state internally
+            // Treat other errors as unauthenticated for safety
+            isAuthenticated.value = false;
+            kindeUser.value = null;
+            userMember.value = null;
         }
     } catch (e) {
         console.error("Error fetching user member data:", e);
-        userMember.value = null; // Update state internally
+        // Treat network errors as unauthenticated for safety
+        isAuthenticated.value = false;
+        kindeUser.value = null;
+        userMember.value = null;
     }
 }
 
 // ADDED: Function to fetch Kinde user info and update state
 async function fetchKindeUserInfo(): Promise<void> {
+     // Only fetch if isAuthenticated is true (confirmed by fetchUserMember)
      if (!isAuthenticated.value) {
          kindeUser.value = null;
          return;
      }
-     console.log("Fetching Kinde user info...");
+     console.log("Fetching Kinde user info from /userinfo endpoint...");
      try {
-         const accessToken = Cookies.get(ACCESS_TOKEN_COOKIE_NAME);
-         if (!accessToken) {
-             console.warn("Cannot fetch Kinde user info: No access token.");
-             kindeUser.value = null;
-             return;
-         }
-         const response = await fetch(`${kindeConfig.issuerUrl}/userinfo`, {
-             headers: {
-                 'Authorization': `Bearer ${accessToken}`,
-                 'Content-Type': 'application/json',
-             },
-         });
+         // Use authenticatedFetch - browser sends HttpOnly cookie, backend validates
+         // authenticatedFetch will handle 401 by clearing state if token is expired
+         const response = await authenticatedFetch(`${kindeConfig.issuerUrl}/userinfo`);
 
          if (response.ok) {
              const userInfo = await response.json();
@@ -193,24 +174,14 @@ async function fetchKindeUserInfo(): Promise<void> {
                  // Add other claims you need
              } as KindeUser;
              console.log("Kinde user info fetched:", kindeUser.value);
-         } else if (response.status === 401) {
-              console.warn("Failed to fetch Kinde user info: Authentication failed (401). Clearing auth state.");
-              // Access token might be expired, need refresh or re-login
-              // For simplicity now, just clear auth state
-              isAuthenticated.value = false;
-              kindeUser.value = null; // Update state internally
-              userMember.value = null; // Update state internally
-              Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
-              Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
-              // Optional: Attempt refresh token flow or redirect to login
-         }
-         else {
-             console.error("Failed to fetch Kinde user info:", response.status, await response.text());
-             kindeUser.value = null; // Update state internally
+         } else {
+             // If /userinfo fails (e.g., token expired), authenticatedFetch already cleared state
+             console.warn("Failed to fetch Kinde user info. State should be cleared by authenticatedFetch.");
+             kindeUser.value = null;
          }
      } catch (e) {
          console.error("Error fetching Kinde user info:", e);
-         kindeUser.value = null; // Update state internally
+         kindeUser.value = null;
      }
 }
 
@@ -259,6 +230,7 @@ async function login(prompt: 'login' | 'create' = 'login'): Promise<void> {
     }
 }
 
+// MODIFIED: handleCallback now triggers checkAuthStatus after successful backend call
 async function handleCallback(code: string, state: string): Promise<{ success: true, user?: KindeUser } | { success: false, error: string }> {
     console.log("Handling Kinde callback...");
     const storedState = localStorage.getItem(STATE_STORAGE_KEY);
@@ -268,6 +240,10 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
         console.error("State mismatch or missing state. Possible CSRF attack.");
         localStorage.removeItem(STATE_STORAGE_KEY);
         localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
+        // Clear auth state on potential attack
+        isAuthenticated.value = false;
+        kindeUser.value = null;
+        userMember.value = null;
         return { success: false, error: "Authentication failed: Invalid state parameter." };
     }
     localStorage.removeItem(STATE_STORAGE_KEY);
@@ -275,6 +251,10 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
     if (!code || !storedVerifier) {
         console.error("Missing authorization code or PKCE verifier.");
          localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
+         // Clear auth state on missing params
+         isAuthenticated.value = false;
+         kindeUser.value = null;
+         userMember.value = null;
         return { success: false, error: "Authentication failed: Missing code or verifier." };
     }
     localStorage.removeItem(PKCE_VERIFIER_STORAGE_KEY);
@@ -298,20 +278,25 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
 
         if (!response.ok) {
             console.error('Backend token exchange failed:', response.status, data);
+            // Clear auth state on backend error
+            isAuthenticated.value = false;
+            kindeUser.value = null;
+            userMember.value = null;
             // MODIFIED: Return the actual error from the backend
             return { success: false, error: data.error || `Failed to exchange code for tokens (${response.status})` };
         }
 
-        console.log("Token exchange successful via backend.");
-        // Backend should have set HttpOnly cookies.
-        // Now, update frontend state by checking cookies and fetching user data.
-        // checkAuthStatus will update isAuthenticated, kindeUser, and userMember internally
+        console.log("Token exchange successful via backend. Triggering auth status check...");
+        // Backend set HttpOnly cookies. Now, trigger frontend state update by checking auth status via backend.
+        // This will call /members/me and update isAuthenticated, kindeUser, and userMember
         await checkAuthStatus();
 
+        // Return success. The user state is now in the composable's reactive refs.
         return { success: true, user: kindeUser.value || undefined }; // Return the fetched user if available
 
     } catch (e: any) {
         console.error("Error during token exchange callback:", e);
+        // Clear state on error
         isAuthenticated.value = false;
         kindeUser.value = null;
         userMember.value = null; // Update state internally
@@ -332,8 +317,8 @@ function logout(): void {
     isAuthenticated.value = false;
     kindeUser.value = null;
     userMember.value = null; // Update state internally
-    Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
-    Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
+    Cookies.remove(ACCESS_TOKEN_COOKIE_NAME); // Best effort for non-HttpOnly
+    Cookies.remove(REFRESH_TOKEN_COOKIE_NAME); // Best effort for non-HttpOnly
 
     const logoutUrl = new URL(`${kindeConfig.issuerUrl}/logout`);
     logoutUrl.searchParams.append('redirect', kindeConfig.logoutRedirectUri);
@@ -341,36 +326,42 @@ function logout(): void {
     window.location.href = logoutUrl.toString();
 }
 
+// getAccessToken is now less useful for HttpOnly cookies, but kept for potential future use or debugging
 function getAccessToken(): string | undefined {
+    // This will return undefined for HttpOnly cookies, which is expected.
     return Cookies.get(ACCESS_TOKEN_COOKIE_NAME);
 }
 
+// MODIFIED: authenticatedFetch relies on browser sending HttpOnly cookies and handles 401
 async function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
-    const token = getAccessToken();
-    // Ensure headers is a mutable object before adding Authorization
+    // For HttpOnly cookies, the browser automatically includes them with the request
+    // to the correct domain. We do NOT need to manually add the Authorization header
+    // if we are relying solely on HttpOnly cookies.
+    // However, keeping the 401 handling is crucial for any authenticated endpoint.
+
+    // Ensure headers is a mutable object before adding Authorization (optional for HttpOnly)
     const headers: Record<string, string> = {
         ...(options.headers as Record<string, string> || {}), // Cast existing headers or use empty object
     };
 
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    } else {
-        console.warn(`Attempted to fetch ${url} without an access token.`);
-        // The backend will return 401, which is handled below
-    }
+    // If you were using non-HttpOnly cookies or other auth methods, you'd add the header here:
+    // const token = getAccessToken();
+    // if (token) {
+    //     headers['Authorization'] = `Bearer ${token}`;
+    // }
 
     const response = await fetch(url, {
         ...options,
-        headers: headers,
+        headers: headers, // Include merged headers (e.g., Content-Type)
     });
 
     if (response.status === 401) {
-        console.warn(`Received 401 Unauthorized for ${url}. Token might be expired or invalid. Clearing auth state.`);
-        // Access token might be expired, need refresh or re-login
-        // For simplicity now, just clear auth state
+        console.warn(`Received 401 Unauthorized for ${url}. Clearing auth state.`);
+        // Backend determined token (from HttpOnly cookie) is invalid or missing
         isAuthenticated.value = false;
         kindeUser.value = null;
-        userMember.value = null; // Update state internally
+        userMember.value = null;
+        // Clear cookies client-side (best effort)
         Cookies.remove(ACCESS_TOKEN_COOKIE_NAME);
         Cookies.remove(REFRESH_TOKEN_COOKIE_NAME);
         // Optional: Redirect to the login page here
@@ -384,28 +375,34 @@ async function authenticatedFetch(url: string, options: RequestInit = {}): Promi
 // This allows Index.vue to trigger state updates managed by the composable
 function updateUserMember(member: Member | null): void {
     userMember.value = member;
+    // When userMember is updated, re-check isAuthenticated based on whether userMember is null
+    // This is a simplified approach. A more robust way might be to rely solely on checkAuthStatus
+    // or have a separate state for "isRegistered". For now, let's link isAuthenticated to userMember presence.
+    // However, isAuthenticated should really mean "logged in via Kinde", not "has a member record".
+    // Let's keep isAuthenticated tied to the backend /members/me check result.
+    // The presence of userMember indicates registration status.
 }
 
 
 // Define the return type of the composable
 interface UseKindeAuthReturn {
-    isAuthenticated: Readonly<Ref<boolean>>;
-    kindeUser: Readonly<Ref<KindeUser | null>>;
-    userMember: Readonly<Ref<Member | null>>;
-    checkAuthStatus: () => Promise<void>;
+    isAuthenticated: Readonly<Ref<boolean>>; // Is logged in via Kinde
+    kindeUser: Readonly<Ref<KindeUser | null>>; // Kinde user info if logged in
+    userMember: Readonly<Ref<Member | null>>; // Member record if registered
+    checkAuthStatus: () => Promise<void>; // Function to check auth status via backend
     login: (prompt?: 'login' | 'create') => Promise<void>;
     logout: () => void;
     handleCallback: (code: string, state: string) => Promise<{ success: true, user?: KindeUser } | { success: false, error: string }>;
-    getAccessToken: () => string | undefined;
-    authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response>;
+    getAccessToken: () => string | undefined; // Still exists, but won't get HttpOnly value
+    authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response>; // Helper for authenticated API calls
     // ADDED: Expose the update function
-    updateUserMember: (member: Member | null) => void;
+    updateUserMember: (member: Member | null) => void; // For components to update state after join/patch
 }
 
 
 export function useKindeAuth(): UseKindeAuthReturn {
-    // Initial check when the composable is first used
-    // This ensures state is populated even if router guard doesn't run immediately
+    // Initial check when the composable is first used in any component.
+    // This ensures state is populated via the backend call on page load.
     if (!authStatusChecked.value) {
         checkAuthStatus();
     }

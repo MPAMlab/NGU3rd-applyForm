@@ -238,11 +238,13 @@ function confirmJoinTeam(): void {
     if (isAuthenticated.value) {
         if (hasUserMember.value) {
              state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-             showStep(1);
+             showStep(1); // Go back to team code step
         } else {
+            // Authenticated but not registered -> proceed to fill info
             showStep(3);
         }
     } else {
+        // Not authenticated -> prompt for login/register
         state.errorMessage = '请先登录或注册以继续报名。';
         showStep(2);
     }
@@ -394,33 +396,40 @@ function clearAvatarFile(): void {
 async function handleSubmitPersonalInfo(): Promise<void> {
     state.errorMessage = null;
 
-    if (!isAuthenticated.value || hasUserMember.value) {
-         console.error("Attempted to submit join form while not authenticated or already registered.");
-         state.errorMessage = isAuthenticated.value ? '你已经报名过了，一个账号只能报名一次。' : '请先登录或注册。';
-         showStep(isAuthenticated.value ? 1 : 2);
+    // Ensure user is authenticated and does NOT have a member record yet
+    if (!isAuthenticated.value) {
+         console.error("Attempted to submit join form while not authenticated.");
+         state.errorMessage = '请先登录或注册以继续报名。';
+         showStep(2); // Go to auth prompt
          return;
     }
+     if (hasUserMember.value) {
+          console.error("Attempted to submit join form while already registered.");
+          state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
+          showStep(1); // Go back to team code step
+          return;
+     }
 
     if (!state.maimaiId || !state.nickname || !state.qqNumber || !state.privacyAgreed) {
         state.errorMessage = '请填写所有必填字段并同意隐私政策。';
         return;
     }
-     if (!state.selectedColor || !state.selectedJob) {
-         state.errorMessage = '内部错误：颜色或职业未选择。请返回上一步。';
-         return;
-     }
+    if (!state.selectedColor || !state.selectedJob) {
+        state.errorMessage = '内部错误：颜色或职业未选择。请返回上一步。';
+        return;
+    }
     if (!/^[1-9][0-9]{4,14}$/.test(state.qqNumber.trim())) {
         state.errorMessage = '请输入有效的QQ号码 (5-15位数字, 非0开头)。';
         return;
     }
-     if (state.maimaiId.trim().length === 0 || state.maimaiId.trim().length > 13) {
-         state.errorMessage = '舞萌ID长度不正确 (应 ≤ 13位)。';
-         return;
-     }
-      if (state.nickname.trim().length === 0 || state.nickname.trim().length > 50) {
-          state.errorMessage = '称呼长度需在1到50个字符之间。';
-          return;
-      }
+    if (state.maimaiId.trim().length === 0 || state.maimaiId.trim().length > 13) {
+        state.errorMessage = '舞萌ID长度不正确 (应 ≤ 13位)。';
+        return;
+    }
+    if (state.nickname.trim().length === 0 || state.nickname.trim().length > 50) {
+        state.errorMessage = '称呼长度需在1到50个字符之间。';
+        return;
+    }
 
     state.showLoadingOverlay = true;
 
@@ -440,7 +449,8 @@ async function handleSubmitPersonalInfo(): Promise<void> {
             console.log("No avatar file selected for join request.");
         }
 
-        const response = await authenticatedFetch(`${API_BASE_URL}/teams/join`, {
+         // Use authenticatedFetch - browser sends HttpOnly cookie, backend validates
+         const response = await authenticatedFetch(`${API_BASE_URL}/teams/join`, {
             method: 'POST',
             mode: 'cors',
             body: formData,
@@ -450,34 +460,41 @@ async function handleSubmitPersonalInfo(): Promise<void> {
 
         if (!response.ok) {
              console.error('API error joining team:', response.status, data);
+              // authenticatedFetch handles 401, so other errors are application-specific
               throw new Error(data.error || `加入队伍失败 (${response.status})`);
         }
 
         console.log("Successfully joined team. Data:", data);
 
+        // Backend returned the new member data. Update the composable state.
         if (data.member) {
-             // MODIFIED: Use the composable's update function
-             updateUserMember(data.member as Member);
+             updateUserMember(data.member as Member); // Update the central userMember state
+             // Also update the local currentTeamMembers list for immediate display
              state.currentTeamMembers.push(data.member as Member);
-             state.completionAllMembers = state.currentTeamMembers;
+             state.completionAllMembers = state.currentTeamMembers; // Update completion list
         } else {
-             // MODIFIED: Rely on checkAuthStatus to update userMember
-             await checkAuthStatus();
-             await fetchTeamMembers(state.teamCode!);
-             state.completionAllMembers = state.currentTeamMembers;
+             console.warn("Join success response did not include a member object. Re-fetching...");
+             // If backend didn't return member, re-fetch auth status to get it
+             await checkAuthStatus(); // This will call /members/me and update userMember
+             await fetchTeamMembers(state.teamCode!); // Re-fetch team members to update list
+             state.completionAllMembers = state.currentTeamMembers; // Update completion list
         }
 
-        showStep(5);
+        showStep(5); // Go to completion page
 
     } catch (e: any) {
         console.error('Fetch error joining team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
+         // Specific error messages based on backend response
          if (e.message.includes('already taken')) {
              state.errorMessage = '选择的颜色或职业已被队伍其他成员占用。';
          } else if (e.message.includes('team is already full')) {
              state.errorMessage = '队伍成员已满，无法加入。';
          } else if (e.message.includes('你已经报名过了')) {
              state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
+         } else if (e.message.includes('Authentication required')) { // Handle 401 if authenticatedFetch didn't catch it
+              state.errorMessage = '认证失败，请重新登录。';
+              logout(); // Trigger Kinde logout
          }
     } finally {
         state.showLoadingOverlay = false;
@@ -1018,29 +1035,44 @@ function createTriangleBackground(): void {
 // --- Lifecycle Hooks ---
 
 onMounted(async () => {
-    // checkAuthStatus is called inside useKindeAuth when first used,
-    // but awaiting it here ensures state is ready before checking URL params.
+    // checkAuthStatus is called inside useKindeAuth when first used.
+    // Await it here to ensure state is populated via the backend call
+    // before processing URL parameters or deciding the initial step.
+    console.log("onMounted: Starting auth status check...");
     await checkAuthStatus();
-    console.log("onMounted: isAuthenticated =", isAuthenticated.value, "userMember =", userMember.value);
+    console.log("onMounted: checkAuthStatus completed. isAuthenticated =", isAuthenticated.value, "userMember =", userMember.value);
 
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
 
+    // Check if there's a team code in the URL (e.g., from a share link)
     if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
         state.teamCode = codeParam;
-        showStep(1);
+        showStep(1); // Go to team code step
          setTimeout(() => {
-             handleContinue();
+             handleContinue(); // Automatically check the team code
          }, 100);
-    } else if (isAuthenticated.value && hasUserMember.value) {
-        console.log("User is authenticated and has a member record. Fetching their team...");
-        state.teamCode = userMember.value!.team_code;
-        await fetchTeamMembers(state.teamCode);
-        state.completionAllMembers = state.currentTeamMembers;
-        showStep(5);
     }
+    // Check if the user is authenticated AND has a member record (determined by checkAuthStatus)
+    else if (isAuthenticated.value && hasUserMember.value) {
+        console.log("User is authenticated and has a member record. Displaying their team...");
+        // The userMember state is already populated by checkAuthStatus -> fetchUserMember
+        state.teamCode = userMember.value!.team_code; // Use the team code from the fetched member
+        // We already have the user's member data, but we need *all* team members for display
+        await fetchTeamMembers(state.teamCode); // Fetch all members for the team
+        state.completionAllMembers = state.currentTeamMembers; // Update completion list
+        showStep(5); // Go directly to completion page
+    }
+    // Check if the user is authenticated but has NO member record yet
+    else if (isAuthenticated.value && !hasUserMember.value) {
+        console.log("User is authenticated but has no member record. Prompting for team code.");
+        // User is logged in but not registered. Show the entry page or team code page.
+        showStep(0); // Or showStep(1) if you want them to re-enter code
+    }
+    // If none of the above, the user is not authenticated
     else {
-       showStep(state.currentStep);
+       console.log("User is not authenticated. Showing entry page.");
+       showStep(0); // Show the initial entry page
     }
 
     createTriangleBackground();
