@@ -13,7 +13,7 @@ const error = ref(null);
 
 onMounted(async () => {
     const code = route.query.code;
-    const state = route.query.state;
+    const state = route.query.state; // Get the state parameter from Kinde redirect
     const errorParam = route.query.error;
     const errorDescription = route.query.error_description;
 
@@ -21,9 +21,8 @@ onMounted(async () => {
         console.error("Kinde callback error:", errorParam, errorDescription);
         error.value = `认证失败: ${errorDescription || errorParam}`;
         loading.value = false;
-        // Optional: Redirect to home or an error page after a delay
         setTimeout(() => {
-             router.push('/');
+             router.push('/'); // Redirect to home on error
         }, 3000);
         return;
     }
@@ -32,23 +31,33 @@ onMounted(async () => {
         error.value = '认证失败: 回调参数缺失。';
         loading.value = false;
          setTimeout(() => {
-             router.push('/');
+             router.push('/'); // Redirect to home on missing params
         }, 3000);
         return;
     }
 
     try {
-        await handleCallback(code, state);
+        // MODIFIED: handleCallback now returns context
+        const result = await handleCallback(code, state);
         console.log("Kinde callback handled successfully. Redirecting...");
-        // Redirect to the home page or a dashboard after successful login
-        router.push('/');
+
+        if (result.success && result.context?.teamCode) {
+             // If context exists and has teamCode, redirect to home with code param
+             console.log(`Redirecting to /?code=${result.context.teamCode}`);
+             router.push({ path: '/', query: { code: result.context.teamCode } });
+        } else {
+             // Otherwise, redirect to home
+             console.log("Redirecting to /");
+             router.push('/');
+        }
+
 
     } catch (e) {
         console.error("Error handling Kinde callback:", e);
         error.value = e.message || '认证处理失败。';
         loading.value = false;
          setTimeout(() => {
-             router.push('/');
+             router.push('/'); // Redirect to home on error
         }, 3000);
     }
 });

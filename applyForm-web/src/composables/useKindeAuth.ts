@@ -150,8 +150,9 @@ async function fetchKindeUserInfo(): Promise<void> {
      }
 }
 
+const OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX = 'kinde_oauth_context_';
 
-async function login(prompt: 'login' | 'create' = 'login'): Promise<void> {
+async function login(prompt: 'login' | 'create' = 'login', context?: { teamCode: string | null, currentStep: number }): Promise<void> {
     if (!kindeConfig.issuerUrl || !kindeConfig.clientId || !kindeConfig.redirectUri) {
         console.error("Kinde configuration missing. Cannot initiate login.");
         alert("认证服务配置错误，请联系管理员。");
@@ -161,10 +162,20 @@ async function login(prompt: 'login' | 'create' = 'login'): Promise<void> {
     try {
         const codeVerifier = generateRandomString(96);
         const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+        // State can be random bytes, base64url encode is fine
         const state = generateRandomString(32);
 
         localStorage.setItem(PKCE_VERIFIER_STORAGE_KEY, codeVerifier);
-        localStorage.setItem(STATE_STORAGE_KEY, state);
+        localStorage.setItem(STATE_STORAGE_KEY, state); // Store the OAuth state itself
+
+        // ADDED: Store the context data associated with this state
+        if (context) {
+             localStorage.setItem(`${OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX}${state}`, JSON.stringify(context));
+             console.log("Stored OAuth state context in localStorage:", context);
+        }
+
+
         console.log("Stored PKCE verifier and state in localStorage.");
 
         const authUrl = new URL(`${kindeConfig.issuerUrl}/oauth2/auth`);
@@ -172,7 +183,7 @@ async function login(prompt: 'login' | 'create' = 'login'): Promise<void> {
         authUrl.searchParams.append('client_id', kindeConfig.clientId);
         authUrl.searchParams.append('redirect_uri', kindeConfig.redirectUri);
         authUrl.searchParams.append('scope', kindeConfig.scope);
-        authUrl.searchParams.append('state', state);
+        authUrl.searchParams.append('state', state); // Pass the generated state
         authUrl.searchParams.append('code_challenge', codeChallenge);
         authUrl.searchParams.append('code_challenge_method', 'S256');
         authUrl.searchParams.append('prompt', prompt);
@@ -187,10 +198,25 @@ async function login(prompt: 'login' | 'create' = 'login'): Promise<void> {
     }
 }
 
-async function handleCallback(code: string, state: string): Promise<{ success: true, user?: KindeUser } | { success: false, error: string }> {
+async function handleCallback(code: string, state: string): Promise<{ success: true, user?: KindeUser, context?: { teamCode: string | null, currentStep: number } } | { success: false, error: string }> {
     console.log("Handling Kinde callback...");
     const storedState = localStorage.getItem(STATE_STORAGE_KEY);
     const storedVerifier = localStorage.getItem(PKCE_VERIFIER_STORAGE_KEY);
+
+    // ADDED: Retrieve context before clearing state
+    let context: { teamCode: string | null, currentStep: number } | undefined;
+    const contextKey = `${OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX}${state}`;
+    const storedContext = localStorage.getItem(contextKey);
+    if (storedContext) {
+        try {
+            context = JSON.parse(storedContext);
+            console.log("Retrieved OAuth state context:", context);
+        } catch (e) {
+            console.error("Failed to parse stored OAuth state context:", e);
+        }
+        localStorage.removeItem(contextKey); // Clean up context storage
+    }
+
 
     if (!state || !storedState || state !== storedState) {
         console.error("State mismatch or missing state. Possible CSRF attack.");
@@ -199,7 +225,7 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
         isAuthenticated.value = false; kindeUser.value = null; userMember.value = null;
         return { success: false, error: "Authentication failed: Invalid state parameter." };
     }
-    localStorage.removeItem(STATE_STORAGE_KEY);
+    localStorage.removeItem(STATE_STORAGE_KEY); // Clear the OAuth state itself
 
     if (!code || !storedVerifier) {
         console.error("Missing authorization code or PKCE verifier.");
@@ -233,10 +259,10 @@ async function handleCallback(code: string, state: string): Promise<{ success: t
         }
 
         console.log("Token exchange successful via backend. Triggering auth status check...");
-        // Backend set HttpOnly cookies. Now, trigger frontend state update by checking auth status via backend.
-        await checkAuthStatus();
+        await checkAuthStatus(); // This updates isAuthenticated, kindeUser, userMember
 
-        return { success: true, user: kindeUser.value || undefined };
+        // MODIFIED: Return the retrieved context along with success
+        return { success: true, user: kindeUser.value || undefined, context: context };
 
     } catch (e: any) {
         console.error("Error during token exchange callback:", e);
@@ -298,28 +324,23 @@ function updateUserMember(member: Member | null): void {
     userMember.value = member;
 }
 
-
 interface UseKindeAuthReturn {
     isAuthenticated: Readonly<Ref<boolean>>;
     kindeUser: Readonly<Ref<KindeUser | null>>;
     userMember: Readonly<Ref<Member | null>>;
     checkAuthStatus: () => Promise<void>;
-    login: (prompt?: 'login' | 'create') => Promise<void>;
+    // MODIFIED: login now accepts optional context
+    login: (prompt?: 'login' | 'create', context?: { teamCode: string | null, currentStep: number }) => Promise<void>;
     logout: () => void;
-    handleCallback: (code: string, state: string) => Promise<{ success: true, user?: KindeUser } | { success: false, error: string }>;
+    // MODIFIED: handleCallback now returns optional context
+    handleCallback: (code: string, state: string) => Promise<{ success: true, user?: KindeUser, context?: { teamCode: string | null, currentStep: number } } | { success: false, error: string }>;
     getAccessToken: () => string | undefined;
     authenticatedFetch: (url: string, options?: RequestInit) => Promise<Response>;
     updateUserMember: (member: Member | null) => void;
 }
 
-
 export function useKindeAuth(): UseKindeAuthReturn {
-    // Initial check when the composable is first used in any component.
-    // This ensures state is populated via the backend call on page load.
-    // We don't need to await it here, as components using the state will react
-    // when checkAuthStatus eventually updates the refs.
-    // The onMounted hook in index.vue will await it explicitly.
-    checkAuthStatus();
+    checkAuthStatus(); // Initial check
 
     return {
         isAuthenticated: readonly(isAuthenticated),

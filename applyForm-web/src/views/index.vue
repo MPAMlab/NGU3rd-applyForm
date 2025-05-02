@@ -109,9 +109,19 @@ const state: State = reactive({
 
 // --- Computed Properties ---
 const progressWidth = computed(() => {
-    const progressSteps: { [key: number]: number } = { 0: 0, 1: 0, 2: 0, 3: 25, 4: 50, 5: 75, 6: 100 };
-    const actualStep = state.currentStep >= 2 ? state.currentStep + 1 : state.currentStep;
-    return `${progressSteps[actualStep]}%`;
+    // Map step number directly to percentage
+    const progressMap: { [key: number]: number } = {
+        0: 0,   // Entry
+        1: 0,   // Team Code
+        2: 0,   // Auth Prompt (Bar starts here, 0%)
+        3: 25,  // Color
+        4: 50,  // Job
+        5: 75,  // Personal Info
+        6: 100  // Completion
+    };
+    // Get the percentage directly from the map based on the current step
+    const percentage = progressMap[state.currentStep] || 0; // Default to 0 if step is unexpected
+    return `${percentage}%`;
 });
 
 const isColorDisabled = computed(() => (color: 'red' | 'green' | 'blue') => {
@@ -190,47 +200,55 @@ async function handleContinue(): Promise<void> {
             body: JSON.stringify({ teamCode: code }),
         });
 
-        const data = await response.json();
-
-        if (!response.ok) {
+        // --- MODIFIED: Handle 404 specifically ---
+        if (response.status === 404) {
+            console.log(`Team code ${code} not found. Proceeding to create new team flow.`);
+            state.teamCode = code; // Keep the entered code
+            state.teamName = null; // Clear any previous team name
+            state.currentTeamMembers = []; // Clear members
+            state.isNewTeam = true; // Mark as new team
+            state.showCreateModal = true; // Show create modal
+            // No need to fetch data or check members for a non-existent team
+        } else if (!response.ok) { // Handle other non-OK statuses as errors
+            const data = await response.json();
             console.error('API error checking team:', response.status, response.statusText, data);
-            throw new Error(data.error || `检查队伍失败 (${response.status})`);
-        }
-
-        if (data.code && data.name) {
+            state.errorMessage = data.error || `检查队伍失败 (${response.status})`;
+            // Maybe stay on step 1 or go back to step 0 depending on severity
+            showStep(1); // Stay on the input step
+        } else { // Handle 200 OK response (team found)
+            const data = await response.json();
+            console.log(`Team code ${code} found. Proceeding to join/view flow.`);
             state.teamCode = data.code;
             state.teamName = data.name;
             state.currentTeamMembers = data.members || [];
 
-            const userIsMember = isAuthenticated.value && kindeUser.value && state.currentTeamMembers.some(member => member.kinde_user_id === kindeUser.value?.id);
+            // --- Existing success logic for joining/viewing team ---
+             const userIsMember = isAuthenticated.value && kindeUser.value && state.currentTeamMembers.some(member => member.kinde_user_id === kindeUser.value?.id);
 
-            if (isAuthenticated.value && hasUserMember.value && userIsMember) {
-                 state.completionAllMembers = state.currentTeamMembers;
-                 console.log("User is already a member of this team. Redirecting to completion.");
-                 showStep(5);
-            } else if (isAuthenticated.value && hasUserMember.value && !userIsMember) {
-                 state.errorMessage = '你已经报名参加了其他队伍，一个账号只能报名一次。';
-                 showStep(1);
-            }
-            else if (state.currentTeamMembers.length >= 3) {
-                 state.errorMessage = `队伍 ${state.teamCode} 已满 (${state.currentTeamMembers.length}/3)，无法加入。`;
-                 showStep(1);
-            }
-            else {
-                 state.isNewTeam = false;
-                 state.showConfirmModal = true;
-            }
-
-        } else {
-            state.teamName = null;
-            state.currentTeamMembers = [];
-            state.isNewTeam = true;
-            state.showCreateModal = true;
+             if (isAuthenticated.value && userMember.value && userIsMember) { // Use userMember.value directly
+                  state.completionAllMembers = state.currentTeamMembers;
+                  console.log("User is already a member of this team. Redirecting to completion.");
+                  showStep(5);
+             } else if (isAuthenticated.value && userMember.value && !userIsMember) { // Use userMember.value directly
+                  state.errorMessage = '你已经报名参加了其他队伍，一个账号只能报名一次。';
+                  showStep(1);
+             }
+             else if (state.currentTeamMembers.length >= 3) {
+                  state.errorMessage = `队伍 ${state.teamCode} 已满 (${state.currentTeamMembers.length}/3)，无法加入。`;
+                  showStep(1);
+             }
+             else {
+                  state.isNewTeam = false;
+                  state.showConfirmModal = true;
+             }
+            // --- End existing success logic ---
         }
+        // --- END MODIFIED ---
 
-    } catch (e: any) {
+    } catch (e: any) { // Catch network errors or errors thrown by the new logic
         console.error('Fetch error checking team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
+        showStep(1); // Stay on the input step
     } finally {
        state.showLoadingOverlay = false;
     }
@@ -239,7 +257,7 @@ async function handleContinue(): Promise<void> {
 function confirmJoinTeam(): void {
     state.showConfirmModal = false;
     if (isAuthenticated.value) {
-        if (hasUserMember.value) {
+        if (userMember.value) { // Check userMember.value directly
              state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
              showStep(1); // Go back to team code step
         } else {
@@ -480,7 +498,7 @@ async function handleSubmitPersonalInfo(): Promise<void> {
         }
 
         // --- ADDED: Scroll to the completion step after showing it ---
-        showStep(5); // Change the step
+        showStep(6); // Change the step
         nextTick(() => { // Wait for DOM to update
             const completionDiv = document.getElementById('step-completion');
             if (completionDiv) {
@@ -1047,14 +1065,17 @@ function createTriangleBackground(): void {
     }
 }
 
+// In the template, change @click="login('login')" to @click="initiateLogin('login')"
+// and @click="login('create')" to @click="initiateLogin('create')"
+function initiateLogin(prompt: 'login' | 'create'): void {
+    // Pass the current teamCode and step as context
+    login(prompt, { teamCode: state.teamCode, currentStep: state.currentStep });
+}
 // --- Lifecycle Hooks ---
 
 onMounted(async () => {
-    // checkAuthStatus is called inside useKindeAuth when first used.
-    // Await it here to ensure state is populated via the backend call
-    // before processing URL parameters or deciding the initial step.
     console.log("onMounted: Starting auth status check...");
-    await checkAuthStatus();
+    await checkAuthStatus(); // This populates isAuthenticated and userMember
     console.log("onMounted: checkAuthStatus completed. isAuthenticated =", isAuthenticated.value, "userMember =", userMember.value);
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -1069,7 +1090,7 @@ onMounted(async () => {
          }, 100);
     }
     // Check if the user is authenticated AND has a member record (determined by checkAuthStatus)
-    else if (isAuthenticated.value && hasUserMember.value) {
+    else if (isAuthenticated.value && userMember.value) { // Use userMember.value directly
         console.log("User is authenticated and has a member record. Displaying their team...");
         // The userMember state is already populated by checkAuthStatus -> fetchUserMember
         state.teamCode = userMember.value!.team_code; // Use the team code from the fetched member
@@ -1079,7 +1100,7 @@ onMounted(async () => {
         showStep(5); // Go directly to completion page
     }
     // Check if the user is authenticated but has NO member record yet
-    else if (isAuthenticated.value && !hasUserMember.value) {
+    else if (isAuthenticated.value && !userMember.value) { // Use userMember.value directly
         console.log("User is authenticated but has no member record. Prompting for team code.");
         // User is logged in but not registered. Show the entry page or team code page.
         showStep(0); // Or showStep(1) if you want them to re-enter code
@@ -1120,7 +1141,7 @@ watch(userMember, (newValue, oldValue) => {
         // Only redirect if we are currently on the completion step (step 5)
         // or potentially any step that requires a registered user.
         // Let's redirect from step 5 specifically, as that's where delete is triggered.
-        if (state.currentStep === 5) {
+        if (state.currentStep === 6) {
              goHome(); // Go back to the initial state/page
              state.errorMessage = '你的报名信息已删除。'; // Optional: show a message
         } else {
@@ -1143,7 +1164,7 @@ watch(userMember, (newValue, oldValue) => {
              console.log("User just logged in/registered and is in the current team. Redirecting to completion.");
              // Ensure completionAllMembers is updated with the current team list
              state.completionAllMembers = state.currentTeamMembers;
-             showStep(5);
+             showStep(6);
              nextTick(() => { // Scroll to the completion step
                  const completionDiv = document.getElementById('step-completion');
                  if (completionDiv) {
@@ -1175,30 +1196,19 @@ watch(userMember, (newValue, oldValue) => {
         <div class="w-full max-w-md mx-auto relative z-10">
 
             <!-- Progress Bar (Visible in steps 3-6) -->
-            <div class="mb-8" v-if="state.currentStep >= 2 && state.currentStep < 5">
+            <div class="mb-8" v-if="state.currentStep >= 2"> <!-- Show from step 2 onwards -->
                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
                     <span :class="{'text-white font-bold': state.currentStep >= 1}">组队码</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 2}">登录/注册</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 3}">颜色</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 4}">职业</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 5}">个人信息</span>
+                    <span :class="{'text-white font-bold': state.currentStep >= 6}">完成</span> <!-- Added Completion step label -->
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill" :style="{ width: progressWidth }"></div>
                 </div>
             </div>
-             <!-- Progress Bar (Completion Step 6) -->
-             <div class="mb-8" v-if="state.currentStep === 5">
-                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                     <span class="text-white font-bold">组队码</span>
-                     <span class="text-white font-bold">登录/注册</span>
-                     <span class="text-white font-bold">颜色</span>
-                     <span class="text-white font-bold">职业</span>
-                     <span class="text-white font-bold">完成</span>
-                 </div>
-                 <div class="progress-bar"><div class="progress-fill" style="width: 100%;"></div></div>
-             </div>
-
 
              <!-- Error message display area -->
              <transition name="fade-in-up">
@@ -1309,7 +1319,7 @@ watch(userMember, (newValue, oldValue) => {
                  <div v-if="isAuthenticated && hasUserMember" class="text-center mb-6">
                      <p class="text-lg text-green-400 font-semibold mb-2">你已登录并已报名！</p>
                      <p class="text-gray-300 text-sm">你的报名信息已关联到你的 Kinde 账号。</p>
-                     <button @click="showStep(5)" class="mt-4 bg-green-700 hover:bg-green-600 text-white py-2 px-4 rounded-lg transition">查看我的报名信息</button>
+                     <button @click="showStep(6)" class="mt-4 bg-green-700 hover:bg-green-600 text-white py-2 px-4 rounded-lg transition">查看我的报名信息</button>
                  </div>
                  <div v-else-if="isAuthenticated && !hasUserMember" class="text-center mb-6">
                      <p class="text-lg text-yellow-400 font-semibold mb-2">你已登录！</p>
@@ -1317,14 +1327,16 @@ watch(userMember, (newValue, oldValue) => {
                      <button @click="showStep(3)" class="mt-4 bg-yellow-700 hover:bg-yellow-600 text-white py-2 px-4 rounded-lg transition">继续填写报名信息</button>
                  </div>
                  <div v-else class="text-center mb-6">
-                     <p class="text-gray-300 text-sm mb-4">请选择登录或注册方式：</p>
-                     <button @click="login('login')" class="btn-glow w-full bg-blue-700 hover:bg-blue-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                         登录
-                     </button>
-                     <button @click="login('create')" class="btn-glow w-full bg-teal-700 hover:bg-teal-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                         注册新账号
-                     </button>
-                 </div>
+                    <p class="text-gray-300 text-sm mb-4">请选择登录或注册方式：</p>
+                    <!-- Call initiateLogin -->
+                    <button @click="initiateLogin('login')" class="btn-glow w-full bg-blue-700 hover:bg-blue-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
+                        登录
+                    </button>
+                    <!-- Call initiateLogin -->
+                    <button @click="initiateLogin('create')" class="btn-glow w-full bg-teal-700 hover:bg-teal-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
+                        注册新账号
+                    </button>
+                </div>
 
 
                  <button type="button" @click="showStep(1)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
@@ -1650,7 +1662,7 @@ watch(userMember, (newValue, oldValue) => {
             </div>
 
             <!-- Step 6: Completion Page -->
-            <div id="step-completion" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 5">
+            <div id="step-completion" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 6">
                  <!-- Progress Bar (Completed) -->
                 <div class="mb-8">
                     <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
