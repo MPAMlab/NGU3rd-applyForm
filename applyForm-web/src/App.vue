@@ -30,8 +30,6 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  /* 防止滚动条出现在 App.vue 层面，滚动应该由内部组件控制 */
-  overflow: hidden;
 }
 
 /*
