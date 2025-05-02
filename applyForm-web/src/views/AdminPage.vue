@@ -579,7 +579,7 @@ function handleLogout() {
     logout(); // Use the logout function from useKindeAuth
 }
 
-function createTriangleBackground(): void {
+function createTriangleBackground() {
     const trianglesContainer = document.getElementById('triangles');
     if (!trianglesContainer) return;
 
@@ -1152,7 +1152,7 @@ tbody tr:last-child td:last-child {
 
 th, td {
     /* Add some padding if needed, already in classes */
-    /* white-space: nowrap; */ /* Already in classes */
+     white-space: nowrap; 
 }
 
 /* Style for disabled select options */
