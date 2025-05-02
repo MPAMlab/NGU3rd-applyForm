@@ -1,7 +1,8 @@
 <!-- views/index.vue -->
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch, type Ref, type ComputedRef } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted, watch, type Ref, type ComputedRef, nextTick } from 'vue'; // Import nextTick
 import QrcodeVue from 'qrcode.vue';
+import { useRoute, useRouter } from 'vue-router'; // Import router if not already
 // ADDED: Import Kinde auth composable
 import { useKindeAuth } from '../composables/useKindeAuth'; // Ensure this path is correct
 
@@ -19,6 +20,8 @@ const {
     authenticatedFetch, // Wrapped fetch function
     updateUserMember, // ADDED: Function to update userMember state via the composable
 } = useKindeAuth();
+
+const router = useRouter(); // Get router instance
 
 // --- Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
@@ -396,17 +399,16 @@ function clearAvatarFile(): void {
 async function handleSubmitPersonalInfo(): Promise<void> {
     state.errorMessage = null;
 
-    // Ensure user is authenticated and does NOT have a member record yet
     if (!isAuthenticated.value) {
          console.error("Attempted to submit join form while not authenticated.");
          state.errorMessage = '请先登录或注册以继续报名。';
-         showStep(2); // Go to auth prompt
+         showStep(2);
          return;
     }
-     if (hasUserMember.value) {
+     if (userMember.value) { // Check userMember.value directly
           console.error("Attempted to submit join form while already registered.");
           state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-          showStep(1); // Go back to team code step
+          showStep(1);
           return;
      }
 
@@ -449,8 +451,7 @@ async function handleSubmitPersonalInfo(): Promise<void> {
             console.log("No avatar file selected for join request.");
         }
 
-         // Use authenticatedFetch - browser sends HttpOnly cookie, backend validates
-         const response = await authenticatedFetch(`${API_BASE_URL}/teams/join`, {
+        const response = await authenticatedFetch(`${API_BASE_URL}/teams/join`, {
             method: 'POST',
             mode: 'cors',
             body: formData,
@@ -459,43 +460,57 @@ async function handleSubmitPersonalInfo(): Promise<void> {
         const data = await response.json();
 
         if (!response.ok) {
-             console.error('API error joining team:', response.status, data);
-              // authenticatedFetch handles 401, so other errors are application-specific
-              throw new Error(data.error || `加入队伍失败 (${response.status})`);
+            console.error('API error joining team:', response.status, data);
+            throw new Error(data.error || `加入队伍失败 (${response.status})`);
         }
 
         console.log("Successfully joined team. Data:", data);
 
-        // Backend returned the new member data. Update the composable state.
         if (data.member) {
-             updateUserMember(data.member as Member); // Update the central userMember state
-             // Also update the local currentTeamMembers list for immediate display
-             state.currentTeamMembers.push(data.member as Member);
-             state.completionAllMembers = state.currentTeamMembers; // Update completion list
+            updateUserMember(data.member as Member); // Update the central userMember state
+            // Also update the local currentTeamMembers list for immediate display
+            state.currentTeamMembers.push(data.member as Member);
+            state.completionAllMembers = state.currentTeamMembers; // Update completion list
         } else {
-             console.warn("Join success response did not include a member object. Re-fetching...");
-             // If backend didn't return member, re-fetch auth status to get it
-             await checkAuthStatus(); // This will call /members/me and update userMember
-             await fetchTeamMembers(state.teamCode!); // Re-fetch team members to update list
-             state.completionAllMembers = state.currentTeamMembers; // Update completion list
+            console.warn("Join success response did not include a member object. Re-fetching...");
+            // If backend didn't return member, re-fetch auth status to get it
+            await checkAuthStatus(); // This will call /members/me and update userMember
+            await fetchTeamMembers(state.teamCode!); // Re-fetch team members to update list
+            state.completionAllMembers = state.currentTeamMembers; // Update completion list
         }
 
-        showStep(5); // Go to completion page
+        // --- ADDED: Scroll to the completion step after showing it ---
+        showStep(5); // Change the step
+        nextTick(() => { // Wait for DOM to update
+            const completionDiv = document.getElementById('step-completion');
+            if (completionDiv) {
+                completionDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                // Fallback scroll to top of the main content area
+                const mainContent = document.querySelector('.w-full.max-w-md.mx-auto.relative.z-10');
+                if (mainContent) {
+                    mainContent.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }
+        });
+        // --- END ADDED ---
+
 
     } catch (e: any) {
         console.error('Fetch error joining team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-         // Specific error messages based on backend response
-         if (e.message.includes('already taken')) {
-             state.errorMessage = '选择的颜色或职业已被队伍其他成员占用。';
-         } else if (e.message.includes('team is already full')) {
-             state.errorMessage = '队伍成员已满，无法加入。';
-         } else if (e.message.includes('你已经报名过了')) {
-             state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-         } else if (e.message.includes('Authentication required')) { // Handle 401 if authenticatedFetch didn't catch it
-              state.errorMessage = '认证失败，请重新登录。';
-              logout(); // Trigger Kinde logout
-         }
+        if (e.message.includes('already taken')) {
+            state.errorMessage = '选择的颜色或职业已被队伍其他成员占用。';
+        } else if (e.message.includes('team is already full')) {
+            state.errorMessage = '队伍成员已满，无法加入。';
+        } else if (e.message.includes('你已经报名过了')) {
+            state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
+        } else if (e.message.includes('Authentication required')) {
+            state.errorMessage = '认证失败，请重新登录。';
+            logout();
+        }
     } finally {
         state.showLoadingOverlay = false;
     }
@@ -1099,22 +1114,51 @@ onUnmounted(() => {
 
 watch(userMember, (newValue, oldValue) => {
     console.log("userMember state changed:", oldValue, "->", newValue);
-    // MODIFIED: Check if oldValue was not null and newValue is null
-    if (oldValue !== null && newValue === null && state.currentStep === 5) {
-        console.log("User member deleted, redirecting from completion page.");
-        goHome();
+    // If userMember was not null and becomes null (e.g., after deletion)
+    if (oldValue !== null && newValue === null) {
+        console.log("User member deleted or logged out, redirecting home.");
+        // Only redirect if we are currently on the completion step (step 5)
+        // or potentially any step that requires a registered user.
+        // Let's redirect from step 5 specifically, as that's where delete is triggered.
+        if (state.currentStep === 5) {
+             goHome(); // Go back to the initial state/page
+             state.errorMessage = '你的报名信息已删除。'; // Optional: show a message
+        } else {
+             // If deleted from edit modal on another step, just update state and close modal
+             closeEditModal();
+             state.errorMessage = '你的报名信息已删除。';
+             // Re-fetch team members to update the list display on the current step
+             if (state.teamCode) {
+                 fetchTeamMembers(state.teamCode);
+             }
+        }
     }
     // If userMember becomes non-null while on step 1 (team code) or 2 (auth prompt),
     // and they are in the current team, redirect to completion
+    // This handles the case where the user logs in/registers via Kinde and is already in the team they checked
     if (oldValue === null && newValue !== null && (state.currentStep === 1 || state.currentStep === 2)) {
+         // Check if the newly logged-in user's Kinde ID matches any member in the *currently loaded* team members list
          const userIsMemberOfCurrentTeam = state.currentTeamMembers.some(member => member.kinde_user_id === newValue.kinde_user_id);
          if (userIsMemberOfCurrentTeam) {
              console.log("User just logged in/registered and is in the current team. Redirecting to completion.");
+             // Ensure completionAllMembers is updated with the current team list
              state.completionAllMembers = state.currentTeamMembers;
              showStep(5);
+             nextTick(() => { // Scroll to the completion step
+                 const completionDiv = document.getElementById('step-completion');
+                 if (completionDiv) {
+                     completionDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                 } else {
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                 }
+             });
          } else {
              console.log("User logged in but not in current team or no team.");
+             // User is logged in but not registered in the *current* team.
+             // They should stay on step 1 or 2 to either join the current team or find another.
+             // The error message should guide them.
              state.errorMessage = '你已登录，但未加入当前队伍或已加入其他队伍。';
+             // Stay on the current step (1 or 2)
          }
     }
 });
