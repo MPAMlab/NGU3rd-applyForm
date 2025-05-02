@@ -1423,7 +1423,7 @@ watch(isCollectionPaused, (newValue) => {
 
 <template>
     <!-- Root container -->
-    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
+    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center px-4 py-8 sm:px-6 lg:px-8 relative">
          <!-- 动态三角形背景 -->
          <div id="triangles" class="absolute inset-0 z-0 overflow-hidden"></div>
         <!-- Main Content Container -->

@@ -722,7 +722,7 @@ watch(isAuthenticated, (newValue) => {
                                  'opacity-50 cursor-not-allowed': isTogglingCollection
                              }"
                          >
-                             <img :src="isCollectionPaused ? 'https://unpkg.com/lucide-static@latest/icons/play-circle.svg' : 'https://unpkg.com/lucide-static@latest/icons/pause-circle.svg'" class="w-4 h-4 mr-2" :alt="isCollectionPaused ? 'Resume' : 'Pause'">
+                             <img :src="isCollectionPaused ? 'https://unpkg.com/lucide-static@latest/icons/play-circle.svg' : 'https://unpkg.com/lucide-static@latest/icons/circle-pause.svg'" class="w-4 h-4 mr-2" :alt="isCollectionPaused ? 'Resume' : 'Pause'">
                              {{ isTogglingCollection ? '切换中...' : (isCollectionPaused ? '恢复收集' : '暂停收集') }}
                          </button>
 
@@ -785,27 +785,33 @@ watch(isAuthenticated, (newValue) => {
                          </thead>
                          <tbody class="divide-y divide-gray-800">
                              <tr v-if="state.isLoading && state.members.length === 0">
-                                 <td colspan="13" class="px-4 py-4 text-center text-gray-500">加载中...</td> <!-- Adjusted colspan -->
+                                 <td colspan="13" class="px-4 py-4 text-center text-gray-500">加载中...</td>
                              </tr>
                               <tr v-else-if="!state.isLoading && state.members.length === 0">
-                                 <td colspan="13" class="px-4 py-4 text-center text-gray-500">暂无成员数据。</td> <!-- Adjusted colspan -->
+                                 <td colspan="13" class="px-4 py-4 text-center text-gray-500">暂无成员数据。</td>
                              </tr>
                              <tr v-else v-for="member in state.members" :key="member.id" class="hover:bg-gray-800 transition-colors">
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.id }}</td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.team_code }}</td>
-                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300 flex items-center">
-                                     <span :class="`color-indicator color-${member.color}-bg mr-2`"></span>
-                                     {{ getColorText(member.color) }}
+                                 <!-- 修改颜色 td -->
+                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">
+                                     <div class="flex items-center">
+                                         <span :class="`color-indicator color-${member.color}-bg mr-2`"></span>
+                                         {{ getColorText(member.color) }}
+                                     </div>
                                  </td>
-                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300 flex items-center">
-                                     <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-2 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                     {{ getJobText(member.job) }}
+                                 <!-- 修改职业 td -->
+                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">
+                                     <div class="flex items-center">
+                                         <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-2 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                         {{ getJobText(member.job) }}
+                                     </div>
                                  </td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm font-mono text-gray-300">{{ member.maimai_id }}</td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.nickname }}</td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.qq_number }}</td>
-                                 <td class="px-4 py-4 text-xs text-gray-400 truncate max-w-[100px]">{{ member.kinde_user_id || 'N/A' }}</td> <!-- Display Kinde ID -->
-                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.is_admin === 1 ? '是' : '否' }}</td> <!-- Display isAdmin -->
+                                 <td class="px-4 py-4 text-xs text-gray-400 truncate max-w-[100px]">{{ member.kinde_user_id || 'N/A' }}</td>
+                                 <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">{{ member.is_admin === 1 ? '是' : '否' }}</td>
                                  <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-300">
                                      <img v-if="member.avatar_url" :src="member.avatar_url" alt="头像" class="w-8 h-8 rounded-full object-cover border border-gray-600">
                                      <span v-else class="text-gray-500">无</span>
