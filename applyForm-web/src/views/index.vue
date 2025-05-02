@@ -1547,7 +1547,7 @@ watch(isCollectionPaused, (newValue) => {
                         <img src="https://unpkg.com/lucide-static@latest/icons/log-in.svg" class="w-12 h-12 text-white" alt="Auth">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">登录或注册</h1>
-                    <p class="text-cyan-300">请使用 Kinde 账号继续报名</p>
+                    <p class="text-cyan-300">请选择登录或者注册新账号以继续报名，账号系统使用一个第三方的登录集成服务 Kinde 并收集必要的个人信息</p>
                 </div>
 
                  <!-- Team Info Box -->
@@ -1899,7 +1899,7 @@ watch(isCollectionPaused, (newValue) => {
                      <div class="mb-6">
                         <label class="flex items-start cursor-pointer">
                             <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-500 rounded bg-gray-700 outline-none">
-                             <span class="text-xs text-gray-300 select-none">我已阅读并同意<a href="#" @click.prevent class="text-purple-400 hover:underline font-medium">隐私政策</a>，允许收集和使用我的QQ号用于组队联系目的。<span class="text-red-500">*</span></span>
+                             <span class="text-xs text-gray-300 select-none">我已阅读并同意<router-link to="/privacy" class="text-purple-400 hover:underline font-medium">隐私政策</router-link>，允许收集和使用我的QQ号用于组队联系目的。<span class="text-red-500">*</span></span>
                         </label>
                     </div>
 
@@ -2070,7 +2070,7 @@ watch(isCollectionPaused, (newValue) => {
 
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10">
-                 <p>{{ new Date().getFullYear() }} © NGU Team © MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p>
+                 <p>{{ new Date().getFullYear() }} © NGU Team © MPAM Laboratory | <router-link to="/privacy" class="text-purple-400 hover:underline font-medium">隐私政策</router-link></p>
             </div>
 
         <!-- Modals -->

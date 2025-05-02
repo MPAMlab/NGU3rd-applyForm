@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import IndexPage from '../views/index.vue';
 import AdminPage from '../views/AdminPage.vue';
 import KindeCallback from '../views/KindeCallback.vue';
+import PrivacyPolicyPage from '../views/PrivacyPolicyPage.vue';
 
 // MODIFIED: Import from .ts file
 import { useKindeAuth } from '../composables/useKindeAuth'; // <--- MODIFIED IMPORT PATH
@@ -26,6 +27,11 @@ const router = createRouter({
       name: 'kinde-callback',
       component: KindeCallback
     },
+    {
+      path: '/privacy', 
+      name: 'privacy-policy',
+      component: PrivacyPolicyPage
+    },
   ]
 });
 
@@ -44,7 +50,10 @@ router.beforeEach(async (to, from, next) => {
         next();
         return;
     }
-
+    if (to.name === 'privacy-policy') {
+      next();
+      return;
+  }
     // Check for routes requiring admin authentication
     if (to.meta.requiresAdminAuth) {
         // Frontend check for admin status (requires fetching user roles from Kinde)
