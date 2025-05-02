@@ -1919,12 +1919,7 @@ watch(isCollectionPaused, (newValue) => {
                  <!-- Progress Bar (Completed) -->
                 <div class="mb-8">
                     <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                         <span class="text-white font-bold">组队码</span>
-                         <span class="text-white font-bold">登录/注册</span>
-                         <span class="text-white font-bold">元素</span> <!-- Changed from 颜色 to 元素 -->
-                         <span class="text-white font-bold">职业</span>
-                         <span class="text-white font-bold">个人信息</span>
-                         <span class="text-white font-bold">完成</span>
+                        
                     </div>
                     <div class="mb-8"><div class="mb-8" style="width: 100%;"></div></div>
                 </div>
