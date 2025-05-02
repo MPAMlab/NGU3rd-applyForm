@@ -365,7 +365,7 @@ interface UseKindeAuthReturn {
     isAuthenticated: Readonly<Ref<boolean>>;
     kindeUser: Readonly<Ref<KindeUser | null>>;
     userMember: Readonly<Ref<Member | null>>;
-    isAdminUser: Readonly<ComputedRef<boolean>>; // ADDED
+    isAdminUser: Readonly<Ref<boolean>>;// ADDED
     checkAuthStatus: () => Promise<void>;
     login: (prompt?: 'login' | 'create', context?: { teamCode: string | null, currentStep: number }) => Promise<void>;
     logout: () => Promise<void>; // logout is now async
