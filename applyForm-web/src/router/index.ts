@@ -1,12 +1,11 @@
-// router/index.js
+// router/index.ts
 import { createRouter, createWebHistory } from 'vue-router';
 import IndexPage from '../views/index.vue';
 import AdminPage from '../views/AdminPage.vue';
-// ADDED: Import the Kinde Callback component
-import KindeCallback from '../views/KindeCallback.vue'; // <--- ADD THIS LINE
+import KindeCallback from '../views/KindeCallback.vue';
 
-// ADDED: Import the Kinde auth composable
-import { useKindeAuth } from '../composables/useKindeAuth'; // <--- ADD THIS LINE
+// MODIFIED: Import from .ts file
+import { useKindeAuth } from '../composables/useKindeAuth'; // <--- MODIFIED IMPORT PATH
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -20,31 +19,25 @@ const router = createRouter({
       path: '/admin',
       name: 'admin',
       component: AdminPage,
-      // ADDED: Meta field to indicate this route requires admin authentication
-      meta: { requiresAdminAuth: true } // <--- ADD THIS LINE
+      meta: { requiresAdminAuth: true }
     },
-    // ADDED: Kinde Callback Route
     {
-      path: '/callback', // This path must match your Kinde Allowed callback URLs
+      path: '/callback',
       name: 'kinde-callback',
-      component: KindeCallback // Use the new callback component
+      component: KindeCallback
     },
-    // Optional: Add a route for logout redirect if needed, though Kinde redirects directly
-    // {
-    //   path: '/logout',
-    //   name: 'logout',
-    //   redirect: '/' // Just redirect to home after Kinde logout
-    // }
   ]
 });
 
-// ADDED: Global Navigation Guard
 router.beforeEach(async (to, from, next) => {
     const { checkAuthStatus, isAuthenticated, kindeUser, userMember } = useKindeAuth();
 
     // Ensure auth status is checked on every navigation
     // The composable handles caching, so this is efficient
+    // Await here to ensure state is ready before proceeding
     await checkAuthStatus();
+    console.log(`Router Guard: Navigating to ${to.path}. Authenticated: ${isAuthenticated.value}, UserMember: ${!!userMember.value}`);
+
 
     // Handle the Kinde callback route - always allow access
     if (to.name === 'kinde-callback') {
@@ -54,24 +47,30 @@ router.beforeEach(async (to, from, next) => {
 
     // Check for routes requiring admin authentication
     if (to.meta.requiresAdminAuth) {
-        // Admin auth is handled by API key in the backend, not Kinde token for now.
-        // You might add a check here if you implement admin login via Kinde later.
-        // For now, we rely solely on the backend API key check.
-        // However, you might want to prevent non-admins from *seeing* the page.
-        // This would require fetching user roles/permissions from Kinde after login.
-        // For simplicity now, we'll let the backend handle admin auth entirely.
-        // If you want a frontend check, you'd need to store admin status in the composable.
+        // Frontend check for admin status (requires fetching user roles from Kinde)
+        // For now, we rely on backend API key. If you implement Kinde roles,
+        // you'd check kindeUser.value?.roles here.
         console.warn("Frontend router guard for admin route is currently bypassed, relying on backend API key.");
         next(); // Allow access, backend will enforce API key
         return;
     }
 
-    // For other routes (like '/', which is the registration page)
-    // We don't strictly *require* authentication to view the page,
-    // but certain actions (like joining/editing) will require it.
-    // The UI in Index.vue will adapt based on isAuthenticated and userMember.
+    // For the registration page ('/'), we don't strictly require auth to *view* it,
+    // but the UI adapts. If the user is authenticated and already has a member record,
+    // we might want to redirect them directly to the completion page or prevent them
+    // from seeing the initial registration steps.
+    // Let's add a redirect if authenticated AND has a member record, and they are trying to access step 1 or 2.
+    // Note: This requires the checkAuthStatus() in the composable to have finished.
+    if (to.path === '/' && isAuthenticated.value && userMember.value) {
+         // User is logged in and registered, redirect to completion page logic within Index.vue
+         // Index.vue's onMounted hook handles the redirect to step 5 if userMember exists.
+         // So, we just let them go to '/' and Index.vue will handle the rest.
+         next();
+         return;
+    }
 
-    next(); // Allow navigation
+
+    next(); // Allow navigation for other cases
 });
 
 

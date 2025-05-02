@@ -43,5 +43,18 @@ export interface Member {
     kinde_user_id: string | null; // Kinde user's unique ID, or null if not linked
 }
 
+/**
+ * Defines the basic structure of the Kinde user information we expect.
+ */
+export interface KindeUser {
+    id: string; // Kinde's unique user ID (sub claim)
+    email?: string; // User's email (if requested in scope)
+    name?: string; // User's full name (if requested in scope)
+    given_name?: string; // User's given name
+    family_name?: string; // User's family name
+    // Add other claims you might use from the ID token or /userinfo endpoint
+}
+
+
 // You can define other types here if needed for your application logic,
 // e.g., interfaces for API request/response bodies.

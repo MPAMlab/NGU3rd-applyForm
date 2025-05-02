@@ -1,9 +1,12 @@
 <!-- views/index.vue -->
-<script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
-import QrcodeVue from 'qrcode.vue'; // 引入 QR Code 组件
+<script setup lang="ts"> // Add lang="ts"
+import { ref, reactive, computed, onMounted, onUnmounted, watch, type Ref, type ComputedRef } from 'vue'; // Import types
+import QrcodeVue from 'qrcode.vue';
 // ADDED: Import Kinde auth composable
-import { useKindeAuth } from '../composables/useKindeAuth'; // <--- ADD THIS LINE
+import { useKindeAuth } from '../composables/useKindeAuth'; // No need for .ts extension here
+
+// Import types from your types file
+import { Member, KindeUser } from '../types'; // Import types
 
 // --- Kinde Auth State and Methods ---
 const {
@@ -14,24 +17,61 @@ const {
     logout, // Function to initiate logout
     checkAuthStatus, // Function to check auth status and fetch userMember
     authenticatedFetch, // Wrapped fetch function
-} = useKindeAuth(); // <--- USE THE COMPOSABLE
+} = useKindeAuth();
 
 // --- Configuration ---
-// MODIFIED: Use authenticatedFetch for API calls
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
-const websiteLink = ref(import.meta.env.VITE_WEBSITE_LINK || 'http://localhost:5173');
+const websiteLink: Ref<string> = ref(import.meta.env.VITE_WEBSITE_LINK || 'http://localhost:5173'); // Add type annotation
 const MAX_AVATAR_SIZE_MB = 2;
 
 // --- State Management (Reactive) ---
-const state = reactive({
-    currentStep: 0, // Step 0: Entry Page, Step 1: Team Code, Step 2: Color, Step 3: Job, Step 4: Personal Info, Step 5: Completion
+interface State { // Define interface for reactive state
+    currentStep: number;
+    teamCode: string | null;
+    teamName: string | null;
+    isNewTeam: boolean;
+    newTeamName: string | null;
+    selectedColor: 'red' | 'green' | 'blue' | null; // Use union type
+    selectedJob: 'attacker' | 'defender' | 'supporter' | null; // Use union type
+    maimaiId: string | null;
+    nickname: string | null;
+    qqNumber: string | null;
+    privacyAgreed: boolean;
+    avatarFile: File | null; // Use File type
+    avatarPreviewUrl: string | null;
+    showEditModal: boolean;
+    editMemberId: number | null; // Use number type for DB ID
+    editNewNickname: string | null;
+    editNewQqNumber: string | null;
+    editNewColor: 'red' | 'green' | 'blue' | null; // Use union type
+    editNewJob: 'attacker' | 'defender' | 'supporter' | null; // Use union type
+    editNewAvatarFile: File | null; // Use File type
+    editNewAvatarPreviewUrl: string | null;
+    editClearAvatarFlag: boolean;
+    showConfirmModal: boolean;
+    showCreateModal: boolean;
+    showLoadingOverlay: boolean;
+    errorMessage: string | null;
+    currentTeamMembers: Member[]; // Use Member type array
+    completionAllMembers: Member[]; // Use Member type array
+    confettiInterval: number | null; // Use number type for interval ID (assuming DOM lib is used)
+
+    eventInfo: {
+        title: string;
+        location: string;
+        time: string;
+        description: string;
+    };
+}
+
+const state: State = reactive({ // Use State interface
+    currentStep: 0,
     teamCode: null,
     teamName: null,
     isNewTeam: false,
     newTeamName: null,
     selectedColor: null,
     selectedJob: null,
-    // MODIFIED: Maimai ID, Nickname, QQ Number are now part of the registration form
     maimaiId: null,
     nickname: null,
     qqNumber: null,
@@ -39,9 +79,7 @@ const state = reactive({
     avatarFile: null,
     avatarPreviewUrl: null,
     showEditModal: false,
-    // REMOVED: editAuthMaimaiId, editAuthQqNumber are NOT used for user auth anymore
-    // ADDED: Fields for editing the *logged-in user's* member data
-    editMemberId: null, // The internal DB ID of the member being edited (should be userMember.id)
+    editMemberId: null,
     editNewNickname: null,
     editNewQqNumber: null,
     editNewColor: null,
@@ -53,35 +91,28 @@ const state = reactive({
     showCreateModal: false,
     showLoadingOverlay: false,
     errorMessage: null,
-    currentTeamMembers: [], // Members of the team being viewed/joined
-    completionAllMembers: [], // Members shown on the completion page (should be the same as currentTeamMembers)
+    currentTeamMembers: [],
+    completionAllMembers: [],
     confettiInterval: null,
 
-    // Event Info
     eventInfo: {
         title: "NGU 3rd 音游娱乐赛",
         location: "翡尔堡家庭娱乐中心(郑州万象城三楼店)",
         time: "2025年5月18日",
         description: "Never ever and ever... 具体规则以及如有变动，请留意群内公告。 官网链接：https://ngu3rd.mpam-lab.xyz",
-        // rulesLink: "#"
     }
 });
 
 // --- Computed Properties ---
 const progressWidth = computed(() => {
-    // Adjust steps for progress calculation (starts from step 2, which requires login)
-    // Step 0, 1 are before the main registration flow
-    const stepProgress = { 0: 0, 1: 0, 2: 0, 3: 25, 4: 50, 5: 75, 6: 100 }; // Adjusted steps
-    // MODIFIED: Progress starts from step 3 (Color Selection) after login/team check
-    const actualStep = state.currentStep >= 2 ? state.currentStep + 1 : state.currentStep; // Shift steps 2-5 to 3-6 for progress bar
-    const progressSteps = { 0: 0, 1: 0, 2: 0, 3: 25, 4: 50, 5: 75, 6: 100 };
+    const progressSteps: { [key: number]: number } = { 0: 0, 1: 0, 2: 0, 3: 25, 4: 50, 5: 75, 6: 100 };
+    const actualStep = state.currentStep >= 2 ? state.currentStep + 1 : state.currentStep;
     return `${progressSteps[actualStep]}%`;
 });
 
-// MODIFIED: isColorDisabled and isJobDisabled should consider the member being edited
-const isColorDisabled = computed(() => (color) => {
+const isColorDisabled = computed(() => (color: 'red' | 'green' | 'blue') => { // Add type annotation
      // If editing, the current color is allowed
-     if (state.showEditModal && state.editMemberId) {
+     if (state.showEditModal && state.editMemberId !== null) { // Check against null
          const memberBeingEdited = state.currentTeamMembers.find(m => m.id === state.editMemberId);
          if (memberBeingEdited && memberBeingEdited.color === color) return false;
      }
@@ -89,9 +120,9 @@ const isColorDisabled = computed(() => (color) => {
     return state.currentTeamMembers.some(member => member.color === color);
 });
 
-const isJobDisabled = computed(() => (jobType) => {
+const isJobDisabled = computed(() => (jobType: 'attacker' | 'defender' | 'supporter') => { // Add type annotation
      // If editing, the current job is allowed
-     if (state.showEditModal && state.editMemberId) {
+     if (state.showEditModal && state.editMemberId !== null) { // Check against null
          const memberBeingEdited = state.currentTeamMembers.find(m => m.id === state.editMemberId);
          if (memberBeingEdited && memberBeingEdited.job === jobType) return false;
      }
@@ -107,40 +138,36 @@ const shareLinkUrl = computed(() => {
 });
 
 // ADDED: Computed property to check if the logged-in user has a member record
-const hasUserMember = computed(() => userMember.value !== null);
+const hasUserMember: ComputedRef<boolean> = computed(() => userMember.value !== null); // Add type annotation
 
 // ADDED: Computed property to get the logged-in user's member data if it exists
-const currentUserMember = computed(() => userMember.value);
+const currentUserMember: ComputedRef<Member | null> = computed(() => userMember.value); // Add type annotation
 
 
 // --- Methods / Functions ---
 
-// Navigation function
-function showStep(stepNumber) {
-    // Clean up confetti when leaving completion step
-    if (state.currentStep === 5 && state.confettiInterval) {
+function showStep(stepNumber: number): void { // Add type annotation
+    if (state.currentStep === 5 && state.confettiInterval !== null) { // Check against null
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
         const celebrationDiv = document.getElementById('celebration');
-        if(celebrationDiv) celebrationDiv.innerHTML = ''; // Clean up DOM
+        if(celebrationDiv) celebrationDiv.innerHTML = '';
     }
 
     state.currentStep = stepNumber;
-    state.errorMessage = null; // Clear error message on step change
+    state.errorMessage = null;
 
-    // Start confetti when entering completion step
     if (stepNumber === 5) {
          setTimeout(() => {
              const celebrationDiv = document.getElementById('celebration');
              if(celebrationDiv) celebrationDiv.innerHTML = '';
              createConfetti();
-             state.confettiInterval = setInterval(createConfetti, 2000);
+             state.confettiInterval = setInterval(createConfetti, 2000) as number; // Explicitly cast to number
          }, 100);
     }
 }
 
-// Handle input team code and check/create team (API: POST /api/teams/check)
-async function handleContinue() {
+async function handleContinue(): Promise<void> { // Add type annotation
     const code = state.teamCode ? state.teamCode.trim() : '';
     state.errorMessage = null;
 
@@ -152,12 +179,11 @@ async function handleContinue() {
     state.showLoadingOverlay = true;
 
     try {
-        // MODIFIED: Use authenticatedFetch if needed, but team check is public
         const response = await fetch(`${API_BASE_URL}/teams/check`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             mode: 'cors',
-            body: JSON.stringify({ teamCode: code }), // Ensure backend expects 'teamCode'
+            body: JSON.stringify({ teamCode: code }),
         });
 
         const data = await response.json();
@@ -167,47 +193,38 @@ async function handleContinue() {
             throw new Error(data.error || `检查队伍失败 (${response.status})`);
         }
 
-        // Backend now returns team info and members directly if found
-        if (data.code && data.name) { // Check if team was found
-            state.teamCode = data.code; // Use the code returned by backend
+        if (data.code && data.name) {
+            state.teamCode = data.code;
             state.teamName = data.name;
             state.currentTeamMembers = data.members || [];
-            state.isNewTeam = false;
 
-            // MODIFIED: Check if user is already a member of this team
-            const userIsMember = state.currentTeamMembers.some(member => member.kinde_user_id === kindeUser.value?.id);
+            const userIsMember = isAuthenticated.value && kindeUser.value && state.currentTeamMembers.some(member => member.kinde_user_id === kindeUser.value?.id); // Check kindeUser.value
 
             if (isAuthenticated.value && hasUserMember.value && userIsMember) {
-                 // User is logged in, has a member record, and is in THIS team
-                 // Redirect them directly to the completion page showing their team
-                 state.completionAllMembers = state.currentTeamMembers; // Use fetched members
+                 state.completionAllMembers = state.currentTeamMembers;
                  console.log("User is already a member of this team. Redirecting to completion.");
-                 showStep(5); // Go directly to completion
+                 showStep(5);
             } else if (isAuthenticated.value && hasUserMember.value && !userIsMember) {
-                 // User is logged in, has a member record, but is NOT in THIS team
-                 // They cannot join another team with the same Kinde account
                  state.errorMessage = '你已经报名参加了其他队伍，一个账号只能报名一次。';
-                 // Stay on step 1 or redirect home
-                 showStep(1); // Stay on step 1 with error
+                 showStep(1);
             }
             else if (state.currentTeamMembers.length >= 3) {
-                 // Team is full, and user is not a member
                  state.errorMessage = `队伍 ${state.teamCode} 已满 (${state.currentTeamMembers.length}/3)，无法加入。`;
-                 showStep(1); // Stay on step 1 with error
+                 showStep(1);
             }
             else {
-                 // Team found, not full, user not already a member (or not logged in)
-                 state.showConfirmModal = true; // Show confirmation modal
+                 state.isNewTeam = false;
+                 state.showConfirmModal = true;
             }
 
-        } else { // Team not found
+        } else {
             state.teamName = null;
             state.currentTeamMembers = [];
             state.isNewTeam = true;
-            state.showCreateModal = true; // Show create team modal
+            state.showCreateModal = true;
         }
 
-    } catch (e) {
+    } catch (e: any) {
         console.error('Fetch error checking team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
     } finally {
@@ -215,28 +232,22 @@ async function handleContinue() {
     }
 }
 
-// Confirm join existing team (from modal)
-function confirmJoinTeam() {
+function confirmJoinTeam(): void {
     state.showConfirmModal = false;
-    // MODIFIED: Check if authenticated before proceeding to color selection
     if (isAuthenticated.value) {
-        // Check if user already has a member record globally
         if (hasUserMember.value) {
              state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-             showStep(1); // Stay on step 1 with error
+             showStep(1);
         } else {
-            // User is authenticated and has no member record - proceed to registration steps
-            showStep(2); // Go to Step 2 (Color Selection)
+            showStep(3);
         }
     } else {
-        // User is not authenticated - prompt them to login/register first
         state.errorMessage = '请先登录或注册以继续报名。';
-        showStep(2); // Go to Step 2 (which will now show login prompt)
+        showStep(2);
     }
 }
 
-// Create new team (API: POST /api/teams/create)
-async function createNewTeam() {
+async function createNewTeam(): Promise<void> {
     const code = state.teamCode ? state.teamCode.trim() : '';
     const name = state.newTeamName ? state.newTeamName.trim() : '';
     state.errorMessage = null;
@@ -253,12 +264,11 @@ async function createNewTeam() {
     state.showLoadingOverlay = true;
 
     try {
-        // MODIFIED: Use authenticatedFetch if team creation requires auth (currently public)
         const response = await fetch(`${API_BASE_URL}/teams/create`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             mode: 'cors',
-            body: JSON.stringify({ teamCode: code, teamName: name.trim() }), // Ensure backend expects 'teamCode', 'teamName'
+            body: JSON.stringify({ teamCode: code, teamName: name.trim() }),
         });
 
         const data = await response.json();
@@ -269,27 +279,23 @@ async function createNewTeam() {
         }
 
         state.teamName = data.name;
-        state.currentTeamMembers = []; // New team starts empty
+        state.currentTeamMembers = [];
         state.showCreateModal = false;
 
-        // MODIFIED: Check if authenticated before proceeding to color selection
         if (isAuthenticated.value) {
-             // Check if user already has a member record globally
              if (hasUserMember.value) {
                   state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-                  showStep(1); // Stay on step 1 with error
+                  showStep(1);
              } else {
-                 // User is authenticated and has no member record - proceed to registration steps
-                 showStep(2); // Go to Step 2 (Color Selection)
+                 showStep(3);
              }
         } else {
-             // User is not authenticated - prompt them to login/register first
              state.errorMessage = '请先登录或注册以继续报名。';
-             showStep(2); // Go to Step 2 (which will now show login prompt)
+             showStep(2);
         }
 
 
-    } catch (e) {
+    } catch (e: any) {
         console.error('Fetch error creating team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
         state.showCreateModal = false;
@@ -298,22 +304,19 @@ async function createNewTeam() {
     }
 }
 
-// Select Color (logic remains similar, but UI might change)
-function selectColor(color) {
+function selectColor(color: 'red' | 'green' | 'blue'): void {
     if (!isColorDisabled.value(color)) {
         state.selectedColor = color;
     }
 }
 
-// Get Color Text (remains the same)
-function getColorText(colorId) {
-     const map = { red: '火', green: '木', blue: '水' };
-     return map[colorId] || '';
+function getColorText(colorId: string | null | undefined): string {
+     const map: { [key: string]: string } = { red: '火', green: '木', blue: '水' };
+     return map[colorId || ''] || '';
 }
 
-// Get Icon Path (remains the same)
-function getIconPath(type, value) {
-    const paths = {
+function getIconPath(type: 'color' | 'job', value: string | null | undefined): string {
+    const paths: { [key: string]: { [key: string]: string } } = {
         color: {
             red: '/fire.svg',
             green: '/wood.svg',
@@ -325,26 +328,24 @@ function getIconPath(type, value) {
             supporter: '/supporter.svg'
         }
     };
-    return paths[type]?.[value] || '';
+    return paths[type]?.[value || ''] || '';
 }
 
-// Select Job (logic remains similar)
-function selectJob(jobId) {
-     const jobType = jobId.replace('job-', '');
+function selectJob(jobId: string): void {
+     const jobType = jobId.replace('job-', '') as 'attacker' | 'defender' | 'supporter';
     if (!isJobDisabled.value(jobType)) {
         state.selectedJob = jobType;
     }
 }
 
-// Get Job Text (remains the same)
-function getJobText(jobType) {
-    const map = { attacker: '绝剑士', defender: '矩盾手', supporter: '炼星师' };
-    return map[jobType] || '';
+function getJobText(jobType: string | null | undefined): string {
+    const map: { [key: string]: string } = { attacker: '绝剑士', defender: '矩盾手', supporter: '炼星师' };
+    return map[jobType || ''] || '';
 }
 
-// Step 4: Handle Avatar File Selection and Preview (remains the same)
-function handleAvatarChange(event) {
-    const file = event.target.files?.[0];
+function handleAvatarChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0] || null;
     state.errorMessage = null;
 
     if (!file) {
@@ -359,14 +360,14 @@ function handleAvatarChange(event) {
     const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
         state.errorMessage = '请选择有效的图片文件 (PNG, JPG, GIF, WEBP)。';
-        event.target.value = '';
+        target.value = '';
         state.avatarFile = null;
          return;
     }
     const sizeLimitBytes = MAX_AVATAR_SIZE_MB * 1024 * 1024;
     if (file.size > sizeLimitBytes) {
         state.errorMessage = `图片大小不能超过 ${MAX_AVATAR_SIZE_MB}MB。`;
-         event.target.value = '';
+         target.value = '';
          state.avatarFile = null;
         return;
     }
@@ -380,16 +381,13 @@ function handleAvatarChange(event) {
     console.log("Avatar file selected:", file.name, "Preview URL:", state.avatarPreviewUrl);
 }
 
-// step 4: Submit Personal Info (API: POST /api/teams/join)
-async function handleSubmitPersonalInfo() {
+async function handleSubmitPersonalInfo(): Promise<void> {
     state.errorMessage = null;
 
-    // MODIFIED: Check if authenticated and userMember does NOT exist
     if (!isAuthenticated.value || hasUserMember.value) {
          console.error("Attempted to submit join form while not authenticated or already registered.");
          state.errorMessage = isAuthenticated.value ? '你已经报名过了，一个账号只能报名一次。' : '请先登录或注册。';
-         // Maybe redirect to step 1 or home
-         showStep(isAuthenticated.value ? 1 : 2); // Go back to team code or login prompt
+         showStep(isAuthenticated.value ? 1 : 2);
          return;
     }
 
@@ -418,13 +416,12 @@ async function handleSubmitPersonalInfo() {
 
     try {
         const formData = new FormData();
-        formData.append('teamCode', state.teamCode.trim());
-        formData.append('color', state.selectedColor);
-        formData.append('job', state.selectedJob);
+        formData.append('teamCode', state.teamCode!.trim());
+        formData.append('color', state.selectedColor!);
+        formData.append('job', state.selectedJob!);
         formData.append('maimaiId', state.maimaiId.trim());
         formData.append('nickname', state.nickname.trim());
         formData.append('qqNumber', state.qqNumber.trim());
-        // REMOVED: No need to send kindeUserId from frontend, backend gets it from token
 
         if (state.avatarFile) {
             formData.append('avatarFile', state.avatarFile);
@@ -433,7 +430,6 @@ async function handleSubmitPersonalInfo() {
             console.log("No avatar file selected for join request.");
         }
 
-        // MODIFIED: Use authenticatedFetch
         const response = await authenticatedFetch(`${API_BASE_URL}/teams/join`, {
             method: 'POST',
             mode: 'cors',
@@ -449,33 +445,26 @@ async function handleSubmitPersonalInfo() {
 
         console.log("Successfully joined team. Data:", data);
 
-        // MODIFIED: Update userMember state after successful join
-        // The backend should return the newly created member object
         if (data.member) {
-             userMember.value = data.member;
-             // Update currentTeamMembers to include the new member
-             state.currentTeamMembers.push(data.member);
-             state.completionAllMembers = state.currentTeamMembers; // Sync completion list
+             userMember.value = data.member as Member;
+             state.currentTeamMembers.push(data.member as Member);
+             state.completionAllMembers = state.currentTeamMembers;
         } else {
-             // If backend didn't return member, refetch userMember state
-             await checkAuthStatus(); // This will fetch the new member data
-             state.completionAllMembers = state.currentTeamMembers; // Need to refetch team members too? Or rely on checkAuthStatus?
-             // Let's refetch the team members to be safe
-             await fetchTeamMembers(state.teamCode);
+             await checkAuthStatus();
+             await fetchTeamMembers(state.teamCode!);
              state.completionAllMembers = state.currentTeamMembers;
         }
 
+        showStep(5);
 
-        showStep(5); // Go to Step 5 (Completion)
-
-    } catch (e) {
+    } catch (e: any) {
         console.error('Fetch error joining team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
          if (e.message.includes('already taken')) {
              state.errorMessage = '选择的颜色或职业已被队伍其他成员占用。';
          } else if (e.message.includes('team is already full')) {
              state.errorMessage = '队伍成员已满，无法加入。';
-         } else if (e.message.includes('你已经报名过了')) { // Error from backend check
+         } else if (e.message.includes('你已经报名过了')) {
              state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
          }
     } finally {
@@ -483,27 +472,25 @@ async function handleSubmitPersonalInfo() {
     }
 }
 
-// ADDED: Function to fetch team members (used after join/edit/delete)
-async function fetchTeamMembers(teamCode) {
+async function fetchTeamMembers(teamCode: string): Promise<void> {
      if (!teamCode) return;
      console.log(`Fetching members for team ${teamCode}...`);
      try {
-         // Team check is a public endpoint
          const response = await fetch(`${API_BASE_URL}/teams/${teamCode}`, {
              method: 'GET',
              mode: 'cors',
          });
          const data = await response.json();
          if (response.ok && data.members) {
-             state.currentTeamMembers = data.members;
-             state.teamName = data.name; // Update team name just in case
-             console.log(`Fetched ${data.members.length} members for team ${teamCode}.`);
+             state.currentTeamMembers = data.members as Member[];
+             state.teamName = data.name as string;
+             console.log(`Fetched ${state.currentTeamMembers.length} members for team ${teamCode}.`);
          } else {
              console.error(`Failed to fetch members for team ${teamCode}:`, response.status, data);
-             state.currentTeamMembers = []; // Clear members on error
+             state.currentTeamMembers = [];
              state.teamName = null;
          }
-     } catch (e) {
+     } catch (e: any) {
          console.error(`Error fetching members for team ${teamCode}:`, e);
          state.currentTeamMembers = [];
          state.teamName = null;
@@ -511,8 +498,7 @@ async function fetchTeamMembers(teamCode) {
 }
 
 
-// Copy Share Link (remains the same)
-function copyShareLink() {
+function copyShareLink(): void {
     const urlToCopy = shareLinkUrl.value;
     if (!urlToCopy) return;
 
@@ -528,8 +514,8 @@ function copyShareLink() {
     }
 }
 
-function handleCopyFeedback() {
-     const copyBtn = document.getElementById('copyBtn');
+function handleCopyFeedback(): void {
+     const copyBtn = document.getElementById('copyBtn') as HTMLButtonElement | null;
      if (copyBtn) {
          const originalIconHTML = copyBtn.innerHTML;
          copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
@@ -541,7 +527,7 @@ function handleCopyFeedback() {
      }
 }
 
-function fallbackCopyTextToClipboard(text) {
+function fallbackCopyTextToClipboard(text: string): void {
     const textarea = document.createElement("textarea");
     textarea.value = text;
     textarea.style.top = "0";
@@ -570,32 +556,30 @@ function fallbackCopyTextToClipboard(text) {
     document.body.removeChild(textarea);
 }
 
-// Return to Home and reset state
-function goHome() {
-    if (state.avatarPreviewUrl) {
+function goHome(): void {
+    if (state.avatarPreviewUrl && state.avatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.avatarPreviewUrl);
     }
-     if (state.editNewAvatarPreviewUrl) {
+     if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
          URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
      }
 
-    // MODIFIED: Reset state, but keep Kinde auth state
     Object.assign(state, {
-        currentStep: 0, // Reset to Entry Page
+        currentStep: 0,
         teamCode: null,
         teamName: null,
         isNewTeam: false,
         newTeamName: null,
         selectedColor: null,
         selectedJob: null,
-        maimaiId: null, // Clear registration form fields
+        maimaiId: null,
         nickname: null,
         qqNumber: null,
         privacyAgreed: false,
         avatarFile: null,
         avatarPreviewUrl: null,
         showEditModal: false,
-        editMemberId: null, // Clear edit state
+        editMemberId: null,
         editNewNickname: null,
         editNewQqNumber: null,
         editNewColor: null,
@@ -607,23 +591,19 @@ function goHome() {
         showCreateModal: false,
         showLoadingOverlay: false,
         errorMessage: null,
-        currentTeamMembers: [], // Clear team members
-        completionAllMembers: [], // Clear completion list
+        currentTeamMembers: [],
+        completionAllMembers: [],
         confettiInterval: null,
     });
 
     const celebrationDiv = document.getElementById('celebration');
     if(celebrationDiv) celebrationDiv.innerHTML = '';
-    // Keep URL clean unless navigating to a specific team code
     if (!window.location.search.includes('code=')) {
         history.replaceState(null, '', window.location.pathname);
     }
-    // Re-check auth status after going home? Not strictly necessary if router guard runs.
-    // checkAuthStatus();
 }
 
-// Confetti Animation (remains the same)
-function createConfetti() {
+function createConfetti(): void {
     const celebrationDiv = document.getElementById('celebration');
     if (!celebrationDiv) return;
     const confettiCount = 20;
@@ -656,9 +636,7 @@ function createConfetti() {
     }
 }
 
-// --- Edit/Delete Modal Functions ---
-// MODIFIED: Open edit modal for the *current logged-in user's* member record
-function openEditModalForUser() {
+function openEditModalForUser(): void {
    if (!currentUserMember.value) {
        console.error("Attempted to open edit modal, but userMember is null.");
        state.errorMessage = "无法找到你的报名信息进行修改。";
@@ -666,29 +644,26 @@ function openEditModalForUser() {
    }
    const member = currentUserMember.value;
    state.editMemberId = member.id;
-   // Pre-fill fields with current user's data
    state.editNewNickname = member.nickname;
    state.editNewQqNumber = member.qq_number;
    state.editNewColor = member.color;
    state.editNewJob = member.job;
-   // Handle existing avatar preview
    if (member.avatar_url) {
-        state.editNewAvatarPreviewUrl = member.avatar_url; // Use the existing URL directly
+        state.editNewAvatarPreviewUrl = member.avatar_url;
    } else {
         state.editNewAvatarPreviewUrl = null;
    }
-   state.editNewAvatarFile = null; // Clear any previously selected new file
-   state.editClearAvatarFlag = false; // Reset clear flag
+   state.editNewAvatarFile = null;
+   state.editClearAvatarFlag = false;
    state.errorMessage = null;
    state.showEditModal = true;
    console.log("Edit modal opened for user member ID:", state.editMemberId);
 }
 
-function closeEditModal() {
+function closeEditModal(): void {
    console.log("Closing edit modal.");
    state.showEditModal = false;
    state.errorMessage = null;
-    // Clean up preview URL if it was a new file object URL
     if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
     }
@@ -698,16 +673,16 @@ function closeEditModal() {
     state.editNewColor = null;
     state.editNewJob = null;
     state.editNewAvatarFile = null;
-    state.editNewAvatarPreviewUrl = null; // Clear preview URL
+    state.editNewAvatarPreviewUrl = null;
     state.editClearAvatarFlag = false;
 }
 
-function handleEditAvatarChange(event) {
-    const file = event.target.files?.[0];
+function handleEditAvatarChange(event: Event): void {
+    const target = event.target as HTMLInputElement;
+    const file = target.files?.[0] || null;
     state.errorMessage = null;
     if (!file) {
         state.editNewAvatarFile = null;
-         // If there was an existing avatar URL, keep it as the preview
          if (currentUserMember.value?.avatar_url) {
              state.editNewAvatarPreviewUrl = currentUserMember.value.avatar_url;
          } else if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
@@ -716,50 +691,47 @@ function handleEditAvatarChange(event) {
          } else {
              state.editNewAvatarPreviewUrl = null;
          }
-        state.editClearAvatarFlag = false; // Uncheck clear if file input is cleared
-         const editAvatarInput = document.getElementById('edit-avatar-upload');
-         if(editAvatarInput) editAvatarInput.value = null;
+        state.editClearAvatarFlag = false;
+         const editAvatarInput = document.getElementById('edit-avatar-upload') as HTMLInputElement | null;
+         if(editAvatarInput) editAvatarInput.value = '';
         return;
     }
     const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
      if (!allowedTypes.includes(file.type)) {
          state.errorMessage = '请选择有效的图片文件 (PNG, JPG, GIF, WEBP)。';
-         event.target.value = '';
+         target.value = '';
          state.editNewAvatarFile = null;
          return;
      }
      const sizeLimitBytes = MAX_AVATAR_SIZE_MB * 1024 * 1024;
      if (file.size > sizeLimitBytes) {
          state.errorMessage = `图片大小不能超过 ${MAX_AVATAR_SIZE_MB}MB。`;
-         event.target.value = '';
+         target.value = '';
          state.editNewAvatarFile = null;
          return;
      }
     state.editNewAvatarFile = file;
-     // Revoke previous preview URL if it was a blob URL
      if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
          URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
      }
-     state.editNewAvatarPreviewUrl = URL.createObjectURL(file); // Create new blob URL for preview
+     state.editNewAvatarPreviewUrl = URL.createObjectURL(file);
      console.log("Edit modal: Avatar file selected:", file.name, "Preview URL:", state.editNewAvatarPreviewUrl);
-     state.editClearAvatarFlag = false; // Uncheck clear if a new file is selected
+     state.editClearAvatarFlag = false;
 }
 
-function removeEditAvatar() {
+function removeEditAvatar(): void {
     state.editNewAvatarFile = null;
-    // Revoke previous preview URL if it was a blob URL
     if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
     }
-    state.editNewAvatarPreviewUrl = null; // Clear preview
-     const editAvatarInput = document.getElementById('edit-avatar-upload');
-     if(editAvatarInput) editAvatarInput.value = null;
-     state.editClearAvatarFlag = true; // Set flag to clear avatar on save
+    state.editNewAvatarPreviewUrl = null;
+     const editAvatarInput = document.getElementById('edit-avatar-upload') as HTMLInputElement | null;
+     if(editAvatarInput) editAvatarInput.value = '';
+     state.editClearAvatarFlag = true;
      console.log("Edit modal: Selected new avatar file removed, clear flag set.");
 }
 
-// MODIFIED: Save changes for the logged-in user's member record (API: PATCH /api/members/:maimaiId)
-async function saveChanges() {
+async function saveChanges(): Promise<void> {
     state.errorMessage = null;
     if (!state.editMemberId || !currentUserMember.value) {
          console.error("Attempted to save changes, but editMemberId or currentUserMember is missing.");
@@ -767,8 +739,6 @@ async function saveChanges() {
          return;
     }
 
-    // MODIFIED: No need for QQ/Maimai ID authentication fields in modal
-    // Validation for *new* values
      if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '' && !/^[1-9][0-9]{4,14}$/.test(state.editNewQqNumber.trim())) {
          state.errorMessage = '请输入有效的QQ号码（修改）。';
          return;
@@ -777,11 +747,13 @@ async function saveChanges() {
           state.errorMessage = '新称呼长度需在1到50个字符之间。';
           return;
       }
-     if (state.editNewColor !== null && state.editNewColor !== '' && !['red', 'green', 'blue'].includes(state.editNewColor)) {
+     // MODIFIED: Check against null, not empty string
+     if (state.editNewColor !== null && !['red', 'green', 'blue'].includes(state.editNewColor)) {
          state.errorMessage = '无效的新颜色选择。';
          return;
      }
-     if (state.editNewJob !== null && state.editNewJob !== '' && !['attacker', 'defender', 'supporter'].includes(state.editNewJob)) {
+     // MODIFIED: Check against null, not empty string
+     if (state.editNewJob !== null && !['attacker', 'defender', 'supporter'].includes(state.editNewJob)) {
          state.errorMessage = '无效的新职业选择。';
          return;
      }
@@ -790,33 +762,32 @@ async function saveChanges() {
     state.showLoadingOverlay = true;
     try {
         const formData = new FormData();
-        // Only append fields if they are being changed or are explicitly set (like clearAvatar)
          if (state.editNewNickname !== null && state.editNewNickname.trim() !== '' && state.editNewNickname.trim() !== currentUserMember.value.nickname) {
              formData.append('nickname', state.editNewNickname.trim());
          }
          if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '' && state.editNewQqNumber.trim() !== currentUserMember.value.qq_number) {
              formData.append('qqNumber', state.editNewQqNumber.trim());
          }
-         if (state.editNewColor !== null && state.editNewColor !== '' && state.editNewColor !== currentUserMember.value.color) {
+         // MODIFIED: Append only if not null AND different from current
+         if (state.editNewColor !== null && state.editNewColor !== currentUserMember.value.color) {
              formData.append('color', state.editNewColor);
          }
-         if (state.editNewJob !== null && state.editNewJob !== '' && state.editNewJob !== currentUserMember.value.job) {
+         // MODIFIED: Append only if not null AND different from current
+         if (state.editNewJob !== null && state.editNewJob !== currentUserMember.value.job) {
              formData.append('job', state.editNewJob);
          }
 
         if (state.editNewAvatarFile) {
             formData.append('avatarFile', state.editNewAvatarFile);
-            formData.append('clearAvatar', 'false'); // Explicitly not clearing if uploading new
+            formData.append('clearAvatar', 'false');
              console.log("Appending new avatar file for update.");
          } else if (state.editClearAvatarFlag) {
             formData.append('clearAvatar', 'true');
              console.log("Appending clearAvatar=true for update.");
          } else {
-             // If no new file and not clearing, explicitly tell backend to keep existing
-             formData.append('clearAvatar', 'false'); // Or backend should default to keep if param is missing
+             formData.append('clearAvatar', 'false');
          }
 
-        // MODIFIED: Use authenticatedFetch and the user's Maimai ID in the URL
         const targetMaimaiId = currentUserMember.value.maimai_id;
         console.log("Sending PATCH request to:", `${API_BASE_URL}/members/${targetMaimaiId}`);
          const response = await authenticatedFetch(`${API_BASE_URL}/members/${targetMaimaiId}`, {
@@ -829,9 +800,8 @@ async function saveChanges() {
              console.error('API error saving changes:', response.status, data);
              let errorMsg = data.error || `保存修改失败 (${response.status})`;
              if (data.error?.includes('Authorization failed')) {
-                 // This should not happen if authenticatedFetch works, but as a fallback
                  errorMsg = '认证失败，请重新登录。';
-                 logout(); // Force logout if auth fails
+                 logout();
              } else if (data.error?.includes('already taken')) {
                  errorMsg = '选择的颜色/职业已被队伍其他成员占用。';
              } else if (data.error?.includes('not found')) {
@@ -839,41 +809,37 @@ async function saveChanges() {
              }
              throw new Error(errorMsg);
         }
-        console('Changes saved successfully:', data);
+        console.log('Changes saved successfully:', data);
         state.errorMessage = '信息更新成功！';
 
-         // MODIFIED: Update userMember state and team member lists
          if (data.member) {
-             userMember.value = data.member; // Update the main userMember state
-             // Find and update the member in currentTeamMembers and completionAllMembers
-             const updatedMaimaiId = data.member.maimai_id?.toString();
+             userMember.value = data.member as Member;
+             const updatedMaimaiId = (data.member as Member).maimai_id?.toString();
              if (updatedMaimaiId) {
-                 const updateList = (list) => {
-                     const index = list.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
+                 const updateList = (list: Member[]) => {
+                     const index = list.findIndex(m => m.maimai_id?.toString() === updatedMaimaiId);
                      if (index !== -1) {
-                          // Use Object.assign or spread to merge properties
-                          list[index] = { ...list[index], ...data.member };
+                          list[index] = { ...list[index], ...(data.member as Member) };
                          console.log("Updated member in list.");
                      } else {
                         console.warn("Updated member not found in list after PATCH.");
                      }
                  };
                  updateList(state.completionAllMembers);
-                 updateList(state.currentTeamMembers); // Also update the list shown in steps 2/3
+                 updateList(state.currentTeamMembers);
              }
          } else {
               console.warn("PATCH success response did not include an updated member object.");
-              // Re-fetch user member and team members to ensure state is fresh
-              await checkAuthStatus(); // This will fetch userMember
-              await fetchTeamMembers(state.teamCode); // This will fetch currentTeamMembers
-              state.completionAllMembers = state.currentTeamMembers; // Sync completion list
+              await checkAuthStatus();
+              await fetchTeamMembers(state.teamCode!);
+              state.completionAllMembers = state.currentTeamMembers;
          }
 
          setTimeout(() => {
              closeEditModal();
              state.errorMessage = null;
          }, 1500);
-    } catch (e) {
+    } catch (e: any) {
         console.error('Fetch error saving changes:', e);
         state.errorMessage = e.message || '保存修改失败，请稍后再试。';
     } finally {
@@ -881,8 +847,7 @@ async function saveChanges() {
     }
 }
 
-// MODIFIED: Delete the logged-in user's member record (API: DELETE /api/members/:maimaiId)
-async function deleteEntry() {
+async function deleteEntry(): Promise<void> {
      state.errorMessage = null;
     if (!state.editMemberId || !currentUserMember.value) {
          console.error("Attempted to delete, but editMemberId or currentUserMember is missing.");
@@ -890,87 +855,76 @@ async function deleteEntry() {
          return;
     }
 
-    // MODIFIED: No need for QQ/Maimai ID authentication fields in modal
     if (!window.confirm(`确定要删除你的报名信息吗？此操作无法撤销！`)) {
         console.log("Delete cancelled by user via confirm dialog.");
         return;
     }
     state.showLoadingOverlay = true;
     try {
-         // MODIFIED: Use authenticatedFetch and the user's Maimai ID in the URL
          const targetMaimaiId = currentUserMember.value.maimai_id;
          console.log("Sending DELETE request to:", `${API_BASE_URL}/members/${targetMaimaiId}`);
          const response = await authenticatedFetch(`${API_BASE_URL}/members/${targetMaimaiId}`, {
              method: 'DELETE',
-             headers: { 'Content-Type': 'application/json' }, // DELETE might not need body, but backend expects it? Check backend.
+             headers: { 'Content-Type': 'application/json' },
              mode: 'cors',
-             // REMOVED: No need to send qqNumberAuth in body
-             // body: JSON.stringify({ qqNumberAuth: state.editAuthQqNumber.trim() }), // REMOVE THIS LINE
          });
 
          if (response.status === 204) {
              console.log('Deletion successful (received 204 No Content).');
              state.errorMessage = '报名信息已成功删除！';
 
-             // MODIFIED: Clear userMember state and update team member lists
-             userMember.value = null; // User no longer has a member record
+             userMember.value = null;
 
-             // Filter the deleted member from local lists
              const deletedMaimaiId = targetMaimaiId;
              state.completionAllMembers = state.completionAllMembers.filter(
-                  member => (member.maimai_id || member.maimaiId)?.toString() !== deletedMaimaiId?.toString()
+                  member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
              );
              state.currentTeamMembers = state.currentTeamMembers.filter(
-                 member => (member.maimai_id || member.maimaiId)?.toString() !== deletedMaimaiId?.toString()
+                 member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
              );
              console.log(`Removed member ${deletedMaimaiId} from local state.`);
 
-              closeEditModal(); // Close the modal
+              closeEditModal();
 
-             // Decide where to go after deletion
-             if (state.currentStep === 5) { // If on completion page
+             if (state.currentStep === 5) {
                   if (state.completionAllMembers.length === 0) {
                        console.log("Team is now empty after deletion from Step 5. Navigating home.");
-                       // If the team is now empty, maybe go back to step 1 or home
                        setTimeout(() => {
-                            goHome(); // Go back to entry/team code step
-                             state.errorMessage = null; // Clear success message after navigation
+                            goHome();
+                             state.errorMessage = null;
                        }, 2000);
                   } else {
-                       // Team still has members, stay on completion page but update list
                        state.errorMessage = '报名信息已成功删除！队伍列表已更新。';
-                       setTimeout(() => { state.errorMessage = null; }, 3000); // Clear message
+                       setTimeout(() => { state.errorMessage = null; }, 3000);
                   }
              } else {
-                  // Deletion happened from modal on a step other than 5 (e.g., confirm modal)
                    state.errorMessage = '报名信息已成功删除！';
-                   // Re-fetch team members to update the list shown in steps 2/3
-                   await fetchTeamMembers(state.teamCode);
-                   state.completionAllMembers = state.currentTeamMembers; // Sync completion list
-                   setTimeout(() => { state.errorMessage = null; }, 3000); // Clear message
-             }
-
-         } else if (response.ok) { // Should ideally be 204, but handle other 2xx
-             const data = await response.json();
-              console.log('Deletion successful (unexpected 2xx):', data);
-              state.errorMessage = '报名信息已成功删除！';
-              userMember.value = null;
-              const deletedMaimaiId = targetMaimaiId;
-              state.completionAllMembers = state.completionAllMembers.filter(
-                   member => (member.maimai_id || member.maimaiId)?.toString() !== deletedMaimaiId?.toString()
-              );
-              state.currentTeamMembers = state.currentTeamMembers.filter(
-                  member => (member.maimai_id || member.maimaiId)?.toString() !== deletedMaimaiId?.toString()
-              );
-              closeEditModal();
-              if (state.currentStep === 5) {
-                   if (state.completionAllMembers.length === 0) { setTimeout(() => { goHome(); state.errorMessage = null; }, 2000); }
-                   else { setTimeout(() => { state.errorMessage = null; }, 3000); }
-              } else {
-                   fetchTeamMembers(state.teamCode);
+                   await fetchTeamMembers(state.teamCode!);
                    state.completionAllMembers = state.currentTeamMembers;
                    setTimeout(() => { state.errorMessage = null; }, 3000);
-              }
+             }
+
+         } else if (response.ok) {
+             const data = await response.json();
+              console.log('Deletion successful (unexpected 2xx):', data);
+               state.errorMessage = '报名信息已成功删除！';
+               userMember.value = null;
+               const deletedMaimaiId = targetMaimaiId;
+               state.completionAllMembers = state.completionAllMembers.filter(
+                    member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
+               );
+               state.currentTeamMembers = state.currentTeamMembers.filter(
+                   member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
+               );
+               closeEditModal();
+               if (state.currentStep === 5) {
+                    if (state.completionAllMembers.length === 0) { setTimeout(() => { goHome(); state.errorMessage = null; }, 2000); }
+                    else { setTimeout(() => { state.errorMessage = null; }, 3000); }
+               } else {
+                    fetchTeamMembers(state.teamCode!);
+                    state.completionAllMembers = state.currentTeamMembers;
+                    setTimeout(() => { state.errorMessage = null; }, 3000);
+               }
 
          } else {
              const data = await response.json();
@@ -978,13 +932,13 @@ async function deleteEntry() {
              let errorMsg = data.error || `删除信息失败 (${response.status})`;
              if (data.error?.includes('Authorization failed')) {
                  errorMsg = '认证失败，请重新登录。';
-                 logout(); // Force logout if auth fails
+                 logout();
              } else if (data.error?.includes('not found')) {
                   errorMsg = '未找到匹配的报名信息。';
              }
             throw new Error(errorMsg);
          }
-    } catch (e) {
+    } catch (e: any) {
         console.error('Fetch error deleting entry:', e);
          state.errorMessage = e.message || '删除失败，请稍后再试。';
     } finally {
@@ -993,12 +947,10 @@ async function deleteEntry() {
 }
 
 
-// Create Triangle Background (remains the same)
-function createTriangleBackground() {
+function createTriangleBackground(): void {
     const trianglesContainer = document.getElementById('triangles');
     if (!trianglesContainer) return;
 
-    // 使用紫色系列颜色替代蓝色
     const colors = ['#c4b5fd', '#a78bfa', '#8b5cf6', '#7c3aed', '#6d28d9'];
     const triangleCount = 50;
 
@@ -1006,23 +958,17 @@ function createTriangleBackground() {
         const triangle = document.createElement('div');
         triangle.classList.add('triangle');
 
-        // 随机大小
         const size = Math.random() * 100 + 50;
 
-        // 随机位置
         const left = Math.random() * 100;
-        const top = Math.random() * 100 + 100; // 从底部开始
+        const top = Math.random() * 100 + 100;
 
-        // 随机颜色
         const color = colors[Math.floor(Math.random() * colors.length)];
 
-        // 随机动画持续时间
         const duration = Math.random() * 30 + 20;
 
-        // 随机动画延迟
         const delay = Math.random() * 30;
 
-        // 设置三角形样式
         triangle.style.borderLeft = `${size / 2}px solid transparent`;
         triangle.style.borderRight = `${size / 2}px solid transparent`;
         triangle.style.borderBottom = `${size}px solid ${color}`;
@@ -1038,82 +984,70 @@ function createTriangleBackground() {
 // --- Lifecycle Hooks ---
 
 onMounted(async () => {
-    // MODIFIED: Check auth status first
+    // checkAuthStatus is called inside useKindeAuth when first used,
+    // but awaiting it here ensures state is ready before checking URL params.
     await checkAuthStatus();
     console.log("onMounted: isAuthenticated =", isAuthenticated.value, "userMember =", userMember.value);
 
-    // Check URL for team code parameter
     const urlParams = new URLSearchParams(window.location.search);
     const codeParam = urlParams.get('code');
 
     if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
         state.teamCode = codeParam;
-        // MODIFIED: Go to step 1, then trigger handleContinue
-        showStep(1); // Show the team code input step
+        showStep(1);
          setTimeout(() => {
-             handleContinue(); // Auto-trigger check after showing the step
+             handleContinue();
          }, 100);
     } else if (isAuthenticated.value && hasUserMember.value) {
-        // If user is logged in and has a member record, fetch their team and go to completion
         console.log("User is authenticated and has a member record. Fetching their team...");
-        state.teamCode = userMember.value.team_code; // Get team code from user's member record
-        await fetchTeamMembers(state.teamCode); // Fetch team details and members
-        state.completionAllMembers = state.currentTeamMembers; // Sync completion list
-        showStep(5); // Go directly to completion page
+        state.teamCode = userMember.value!.team_code;
+        await fetchTeamMembers(state.teamCode);
+        state.completionAllMembers = state.currentTeamMembers;
+        showStep(5);
     }
     else {
-       // MODIFIED: Ensure initial step (0) is shown if no code param and not logged in/registered
-       showStep(state.currentStep); // Should be 0 initially
+       showStep(state.currentStep);
     }
 
-    // Create triangle background
     createTriangleBackground();
 });
 
 onUnmounted(() => {
-    // Clean up confetti interval
-    if (state.confettiInterval) {
+    if (state.confettiInterval !== null) { // Check against null
         clearInterval(state.confettiInterval);
         state.confettiInterval = null;
          const celebrationDiv = document.getElementById('celebration');
          if(celebrationDiv) celebrationDiv.innerHTML = '';
     }
-    // Clean up avatar preview Object URLs
     if (state.avatarPreviewUrl && state.avatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.avatarPreviewUrl);
     }
      if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
     }
-    // Clean up triangle background
     const trianglesContainer = document.getElementById('triangles');
     if (trianglesContainer) {
         trianglesContainer.innerHTML = '';
     }
 });
 
-// Watch for changes in userMember state to potentially update UI
 watch(userMember, (newValue, oldValue) => {
     console.log("userMember state changed:", oldValue, "->", newValue);
-    // If userMember becomes null while on step 5 (completion), redirect home
     if (oldValue !== null && newValue === null && state.currentStep === 5) {
         console.log("User member deleted, redirecting from completion page.");
         goHome();
     }
-    // If userMember becomes non-null while on step 1 (team code) or 2 (login prompt),
+    // If userMember becomes non-null while on step 1 (team code) or 2 (auth prompt),
     // and they are in the current team, redirect to completion
     if (oldValue === null && newValue !== null && (state.currentStep === 1 || state.currentStep === 2)) {
          const userIsMemberOfCurrentTeam = state.currentTeamMembers.some(member => member.kinde_user_id === newValue.kinde_user_id);
          if (userIsMemberOfCurrentTeam) {
              console.log("User just logged in/registered and is in the current team. Redirecting to completion.");
-             state.completionAllMembers = state.currentTeamMembers; // Sync completion list
+             state.completionAllMembers = state.currentTeamMembers;
              showStep(5);
          } else {
-             // User logged in but is in a different team or no team
-             // Stay on current step, maybe show a message
              console.log("User logged in but not in current team or no team.");
              state.errorMessage = '你已登录，但未加入当前队伍或已加入其他队伍。';
-             // Stay on step 1 or 2
          }
     }
 });
@@ -1130,12 +1064,10 @@ watch(userMember, (newValue, oldValue) => {
         <div class="w-full max-w-md mx-auto relative z-10">
 
             <!-- Progress Bar (Visible in steps 3-6) -->
-            <!-- MODIFIED: v-if condition changed -->
             <div class="mb-8" v-if="state.currentStep >= 2 && state.currentStep < 5">
                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                    <!-- MODIFIED: Highlight logic adjusted for new steps -->
                     <span :class="{'text-white font-bold': state.currentStep >= 1}">组队码</span>
-                    <span :class="{'text-white font-bold': state.currentStep >= 2}">登录/注册</span> <!-- ADDED Step -->
+                    <span :class="{'text-white font-bold': state.currentStep >= 2}">登录/注册</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 3}">颜色</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 4}">职业</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 5}">个人信息</span>
@@ -1224,17 +1156,17 @@ watch(userMember, (newValue, oldValue) => {
                         maxlength="4"
                         placeholder="1234"
                         class="input-code w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-4 px-6 text-2xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500 text-center tracking-[0.5em]"
-                        @input="(event) => state.teamCode = event.target.value.replace(/[^0-9]/g, '')"
-                        @keydown.enter="handleContinue"
+                        @input="(event) => state.teamCode = (event.target as HTMLInputElement).value.replace(/[^0-9]/g, '')"
+                        @keydown.enter="handleContinue()"
                     >
                     <p class="mt-2 text-xs text-gray-400">不存在的组队码将自动创建新队伍</p>
                 </div>
 
                 <!-- Continue Button -->
-                <button @click="handleContinue" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
+                <button @click="handleContinue()" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     继续
                 </button>
-                 <button type="button" @click="showStep(0)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                 <button type="button" @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回活动信息
                 </button>
             </div>
@@ -1374,8 +1306,7 @@ watch(userMember, (newValue, oldValue) => {
                                     </p>
                                 </div>
                             </div>
-                            <!-- MODIFIED: Edit button only shown for the logged-in user's member record -->
-                            <button
+                             <button
                                 v-if="isAuthenticated && currentUserMember && member.kinde_user_id === kindeUser?.id"
                                 type="button"
                                 @click="openEditModalForUser()"
@@ -1430,7 +1361,7 @@ watch(userMember, (newValue, oldValue) => {
                  <div class="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
                     <div role="button" tabindex="0" class="job-option"
                          :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
-                         @click="selectJob('job-attacker');" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
+                         @click="selectJob('job-attacker')" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
                          <div class="job-attacker-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
                              <img :src="getIconPath('job', 'attacker')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('attacker') + '图标'">
                         </div>
@@ -1487,7 +1418,6 @@ watch(userMember, (newValue, oldValue) => {
                                     </span>
                                 </p>
                             </div>
-                             <!-- MODIFIED: Edit button only shown for the logged-in user's member record -->
                              <button
                                 v-if="isAuthenticated && currentUserMember && member.kinde_user_id === kindeUser?.id"
                                 type="button"
@@ -1548,7 +1478,7 @@ watch(userMember, (newValue, oldValue) => {
                 </div>
 
                 <!-- Form -->
-                 <form @submit.prevent="handleSubmitPersonalInfo">
+                 <form @submit.prevent="handleSubmitPersonalInfo()">
 
                     <!-- Avatar Upload Section -->
                     <div class="mb-6 text-center">
@@ -1566,7 +1496,7 @@ watch(userMember, (newValue, oldValue) => {
                             <!-- Hidden file input -->
                             <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
 
-                            <button v-if="state.avatarFile" type="button" @click="handleAvatarChange({ target: { files: [] }})" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
+                            <button v-if="state.avatarFile" type="button" @click="handleAvatarChange({ target: { files: [] } } as Event)" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
                         </div>
                     </div>
 
@@ -1612,11 +1542,11 @@ watch(userMember, (newValue, oldValue) => {
                  <!-- Progress Bar (Completed) -->
                 <div class="mb-8">
                     <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                        <span class="text-white font-bold">组队码</span>
-                        <span class="text-white font-bold">登录/注册</span>
-                        <span class="text-white font-bold">颜色</span>
-                        <span class="text-white font-bold">职业</span>
-                        <span class="text-white font-bold">完成</span>
+                         <span class="text-white font-bold">组队码</span>
+                         <span class="text-white font-bold">登录/注册</span>
+                         <span class="text-white font-bold">颜色</span>
+                         <span class="text-white font-bold">职业</span>
+                         <span class="text-white font-bold">完成</span>
                     </div>
                     <div class="progress-bar"><div class="progress-fill" style="width: 100%;"></div></div>
                 </div>
@@ -1670,7 +1600,6 @@ watch(userMember, (newValue, oldValue) => {
                             <div class="flex-grow">
                                  <p class="font-medium text-sm flex items-center">
                                     {{ member.nickname }}
-                                    <!-- MODIFIED: Check against kindeUser.id -->
                                     <span v-if="isAuthenticated && kindeUser && member.kinde_user_id === kindeUser.id" class="ml-2 text-xs bg-purple-600 px-1.5 py-0.5 rounded text-white font-bold">你</span>
                                 </p>
                                 <p class="text-xs text-gray-300 flex items-center flex-wrap">
@@ -1684,10 +1613,9 @@ watch(userMember, (newValue, oldValue) => {
                                     </span>
                                 </p>
                             </div>
-                        </div>
+                         </div>
                     </div>
                      <div class="mt-6 text-center">
-                         <!-- MODIFIED: Button only shown if userMember exists -->
                          <button
                              v-if="isAuthenticated && currentUserMember"
                              @click="openEditModalForUser()"
@@ -1735,7 +1663,7 @@ watch(userMember, (newValue, oldValue) => {
                          <button
                              id="copyBtn"
                              type="button"
-                             @click="copyShareLink"
+                             @click="copyShareLink()"
                              class="bg-purple-700 hover:bg-purple-600 rounded-r-lg px-4 transition duration-200 flex items-center justify-center"
                              :disabled="!shareLinkUrl"
                              :class="{'opacity-50 cursor-not-allowed': !shareLinkUrl}"
@@ -1747,15 +1675,15 @@ watch(userMember, (newValue, oldValue) => {
                 </div>
 
                 <!-- Back to Home Button -->
-                <button type="button" @click="goHome" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300 mb-4">
+                <button type="button" @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300 mb-4">
                     返回首页
                 </button>
 
-                 <!-- ADDED: Logout Button -->
+                 <!-- Logout Button -->
                  <button
                      v-if="isAuthenticated"
                      type="button"
-                     @click="logout"
+                     @click="logout()"
                      class="w-full bg-red-700 hover:bg-red-600 rounded-lg py-3 font-bold transition duration-300"
                  >
                      退出登录
@@ -1780,7 +1708,7 @@ watch(userMember, (newValue, oldValue) => {
                 <p class="mb-6 text-sm text-gray-200">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍。当前成员 <span class="font-bold">{{ state.currentTeamMembers.length }}</span>/3。</p>
                  <div v-if="state.currentTeamMembers.length > 0" class="mb-4 space-y-2 max-h-32 overflow-y-auto text-sm border-t border-b border-gray-700 py-2 px-1">
                      <span class="font-semibold text-purple-300 block mb-1">现有成员:</span>
-                      <div v-for="member in state.currentTeamMembers" :key="member.maimai_id || (member.nickname + member.qqNumber)" class="flex items-center justify-between">
+                      <div v-for="member in state.currentTeamMembers" :key="member.maimai_id || (member.nickname + member.qq_number)" class="flex items-center justify-between">
                          <div class="flex items-center flex-grow mr-2">
                              <img
                                  v-if="member.avatar_url"
@@ -1798,7 +1726,6 @@ watch(userMember, (newValue, oldValue) => {
                               </div>
                              <span class="text-gray-300 flex-grow">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
                          </div>
-                         <!-- MODIFIED: Edit button only shown for the logged-in user's member record -->
                          <button
                             v-if="isAuthenticated && currentUserMember && member.kinde_user_id === kindeUser?.id"
                              type="button"
@@ -1816,7 +1743,7 @@ watch(userMember, (newValue, oldValue) => {
                     <button type="button" @click="state.showConfirmModal = false; /* Keep loading state managed by handleContinue finally */" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
                         取消
                     </button>
-                    <button type="button" @click="confirmJoinTeam" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium">
+                    <button type="button" @click="confirmJoinTeam()" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium">
                         确认加入
                     </button>
                 </div>
@@ -1830,14 +1757,14 @@ watch(userMember, (newValue, oldValue) => {
                 <p class="mb-4 text-sm text-gray-200">组队码 <span class="font-bold text-purple-400">{{ state.teamCode }}</span> 未被使用。请为你的队伍命名：</p>
                 <div class="mb-6">
                     <label for="newTeamName" class="block text-sm font-medium text-purple-300 mb-2">队伍名称 <span class="text-red-500">*</span></label>
-                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：对不队" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20" @keydown.enter="createNewTeam">
+                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：对不队" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20" @keydown.enter="createNewTeam()">
                      <p v-if="state.errorMessage && state.showCreateModal" class="mt-2 text-xs text-red-400">{{ state.errorMessage }}</p>
                 </div>
                 <div class="flex space-x-4">
                     <button type="button" @click="state.showCreateModal = false; state.errorMessage = null;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
                         取消
                     </button>
-                    <button type="button" @click="createNewTeam" :disabled="!state.newTeamName?.trim()" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': !state.newTeamName?.trim()}">
+                    <button type="button" @click="createNewTeam()" :disabled="!state.newTeamName?.trim()" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': !state.newTeamName?.trim()}">
                         确认创建
                     </button>
                 </div>
@@ -1848,7 +1775,6 @@ watch(userMember, (newValue, oldValue) => {
         <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showEditModal">
             <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8">
                 <h3 class="text-xl font-bold mb-4 text-center">修改我的信息</h3>
-                 <!-- MODIFIED: Removed authentication fields -->
                  <p class="mb-6 text-sm text-gray-300 text-center">修改你的报名信息。</p>
 
                  <!-- Editable Fields -->
@@ -1968,15 +1894,15 @@ watch(userMember, (newValue, oldValue) => {
                  <p v-if="state.errorMessage && state.showEditModal" class="mt-2 text-xs text-red-400 text-center mb-4">{{ state.errorMessage }}</p>
 
                 <div class="flex space-x-4">
-                    <button type="button" @click="closeEditModal" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
+                    <button type="button" @click="closeEditModal()" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
                         取消
                     </button>
-                    <button type="button" @click="saveChanges" :disabled="state.showLoadingOverlay" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay}">
+                    <button type="button" @click="saveChanges()" :disabled="state.showLoadingOverlay" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay}">
                          {{ state.showLoadingOverlay ? '正在保存...' : '保存修改' }}
                     </button>
                 </div>
                  <div class="mt-4 text-center">
-                     <button type="button" @click="deleteEntry" :disabled="state.showLoadingOverlay" class="text-red-400 hover:text-red-500 text-sm font-medium transition" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay}">
+                     <button type="button" @click="deleteEntry()" :disabled="state.showLoadingOverlay" class="text-red-400 hover:text-red-500 text-sm font-medium transition" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay}">
                          删除我的报名信息
                      </button>
                  </div>
@@ -1994,7 +1920,7 @@ watch(userMember, (newValue, oldValue) => {
          <!-- Confetti Layer -->
          <div id="celebration" class="fixed inset-0 pointer-events-none z-40"></div>
 
-
+    </div> <!-- End of Root container -->
 </template>
 
 <style scoped>
@@ -2131,12 +2057,6 @@ watch(userMember, (newValue, oldValue) => {
 .job-attacker-bg { background: linear-gradient(to bottom right, #f97316, #c2410c); } /* orange-500 to orange-700 */
 .job-defender-bg { background: linear-gradient(to bottom right, #14b8a6, #0d9488); } /* teal-500 to teal-700 */
 .job-supporter-bg { background: linear-gradient(to bottom right, #a855f7, #7e22ce); } /* purple-500 to purple-700 */
-
-/* Color/Job Shadows (Optional) */
-.color-red-shadow { box-shadow: 0 4px 10px rgba(239, 68, 68, 0.4); }
-.color-green-shadow { box-shadow: 0 4px 10px rgba(34, 197, 94, 0.4); }
-.color-blue-shadow { box-shadow: 0 4px 10px rgba(59, 130, 246, 0.4); }
-.job-shadow { box-shadow: 0 4px 10px rgba(168, 85, 247, 0.4); } /* Using purple shadow for all jobs */
 
 /* Color Indicator */
 .color-indicator {
