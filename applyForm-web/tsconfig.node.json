@@ -9,11 +9,13 @@
     "eslint.config.*"
   ],
   "compilerOptions": {
-    "noEmit": true,
+    // ADDED for project references
+    "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
 
+    // REMOVED "noEmit": true,
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "Bundler", // Note: "Bundler" is the modern recommended value
     "types": ["node"]
   }
 }

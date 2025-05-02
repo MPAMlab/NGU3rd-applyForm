@@ -1,20 +1,21 @@
 {
   "compilerOptions": {
-    "target": "ESNext", // Or "ES2020", "ES2022"
-    "module": "ESNext", // Or "Node16", "NodeNext", "ES2020", "ES2022" - ESNext is generally safe for Vite
-    "moduleResolution": "bundler", // Recommended for Vite/Rollup/Webpack 5+
-    "strict": true, // Enable strict type-checking options (recommended)
-    "jsx": "preserve", // Keep JSX as is for Vue compiler
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "preserve",
     "sourceMap": true,
     "resolveJsonModule": true,
-    "esModuleInterop": true, // Allow default imports from modules with no default export
-    "lib": ["ESNext", "DOM"], // Include standard ES and DOM libraries
-    "skipLibCheck": true, // Skip type checking of declaration files (speeds up build)
-    "isolatedModules": true, // Recommended for build tools like Vite
-    "types": ["vue/ref-macros", "vue/compiler-sfc", "vite/client", "js-cookie", "crypto-js", "node"], // Explicitly include types
-    "baseUrl": "./src", // If you use @/ aliases, set this
+    "esModuleInterop": true,
+    "lib": ["ESNext", "DOM"],
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    // REMOVED "vue/ref-macros" from this array
+    "types": ["vue/compiler-sfc", "vite/client", "js-cookie", "crypto-js", "node"],
+    "baseUrl": "./src",
     "paths": {
-       "@/*": ["./*"] // If you use @/ aliases, set this
+       "@/*": ["./*"]
     }
   },
   "include": [
@@ -22,7 +23,8 @@
     "src/**/*.d.ts",
     "src/**/*.tsx",
     "src/**/*.vue",
-    "env.d.ts" // Include Vite's env type file
+    "env.d.ts"
   ],
-  "references": [{ "path": "./tsconfig.node.json" }] // If you have a separate tsconfig for node environment
+  // This reference requires tsconfig.node.json to be configured correctly
+  "references": [{ "path": "./tsconfig.node.json" }]
 }
