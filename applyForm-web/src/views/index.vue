@@ -1994,7 +1994,7 @@ watch(userMember, (newValue, oldValue) => {
          <!-- Confetti Layer -->
          <div id="celebration" class="fixed inset-0 pointer-events-none z-40"></div>
 
-    </div> <!-- End of Root container -->
+
 </template>
 
 <style scoped>
