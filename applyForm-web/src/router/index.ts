@@ -1,29 +1,78 @@
-import { createRouter, createWebHistory } from 'vue-router'
-// 导入我们创建的 Index.vue 组件
-// 请根据你实际存放 Index.vue 的路径修改这里的路径
-import IndexPage from '../views/index.vue' // 假设你放在了 src/views 下
+// router/index.js
+import { createRouter, createWebHistory } from 'vue-router';
+import IndexPage from '../views/index.vue';
+import AdminPage from '../views/AdminPage.vue';
+// ADDED: Import the Kinde Callback component
+import KindeCallback from '../views/KindeCallback.vue'; // <--- ADD THIS LINE
 
-// ADDED: Import the new AdminPage component (assuming it's in src/views)
-// If you put it elsewhere, adjust the path accordingly
-import AdminPage from '../views/AdminPage.vue' // <--- ADD THIS LINE
+// ADDED: Import the Kinde auth composable
+import { useKindeAuth } from '../composables/useKindeAuth'; // <--- ADD THIS LINE
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
-      // 定义根路径 '/'
       path: '/',
-      name: 'registration', // 给路由一个名字
-      component: IndexPage // 使用 IndexPage 组件来渲染这个路径
+      name: 'registration',
+      component: IndexPage
     },
-    // ADDED: Admin Route
     {
-      path: '/admin', // The URL path for the admin page
+      path: '/admin',
       name: 'admin',
-      component: AdminPage // Use the new AdminPage component
-      // Optional: Add meta fields if needed, e.g., requiresAuth: true
-    }
+      component: AdminPage,
+      // ADDED: Meta field to indicate this route requires admin authentication
+      meta: { requiresAdminAuth: true } // <--- ADD THIS LINE
+    },
+    // ADDED: Kinde Callback Route
+    {
+      path: '/callback', // This path must match your Kinde Allowed callback URLs
+      name: 'kinde-callback',
+      component: KindeCallback // Use the new callback component
+    },
+    // Optional: Add a route for logout redirect if needed, though Kinde redirects directly
+    // {
+    //   path: '/logout',
+    //   name: 'logout',
+    //   redirect: '/' // Just redirect to home after Kinde logout
+    // }
   ]
-})
+});
 
-export default router
+// ADDED: Global Navigation Guard
+router.beforeEach(async (to, from, next) => {
+    const { checkAuthStatus, isAuthenticated, kindeUser, userMember } = useKindeAuth();
+
+    // Ensure auth status is checked on every navigation
+    // The composable handles caching, so this is efficient
+    await checkAuthStatus();
+
+    // Handle the Kinde callback route - always allow access
+    if (to.name === 'kinde-callback') {
+        next();
+        return;
+    }
+
+    // Check for routes requiring admin authentication
+    if (to.meta.requiresAdminAuth) {
+        // Admin auth is handled by API key in the backend, not Kinde token for now.
+        // You might add a check here if you implement admin login via Kinde later.
+        // For now, we rely solely on the backend API key check.
+        // However, you might want to prevent non-admins from *seeing* the page.
+        // This would require fetching user roles/permissions from Kinde after login.
+        // For simplicity now, we'll let the backend handle admin auth entirely.
+        // If you want a frontend check, you'd need to store admin status in the composable.
+        console.warn("Frontend router guard for admin route is currently bypassed, relying on backend API key.");
+        next(); // Allow access, backend will enforce API key
+        return;
+    }
+
+    // For other routes (like '/', which is the registration page)
+    // We don't strictly *require* authentication to view the page,
+    // but certain actions (like joining/editing) will require it.
+    // The UI in Index.vue will adapt based on isAuthenticated and userMember.
+
+    next(); // Allow navigation
+});
+
+
+export default router;

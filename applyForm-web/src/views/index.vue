@@ -1,892 +1,748 @@
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
-import QrcodeVue from 'qrcode.vue'; // 引入 QR Code 组件
+import { ref, reactive, computed, onMounted, watch } from 'vue';
+import QrcodeVue from 'qrcode.vue';
+import { useRoute } from 'vue-router'; // Import useRoute
+// ADDED: Import Kinde client and potentially user state
+import { kindeClient } from '../auth'; // Adjust path
+// You might want a global state management (Pinia/Vuex) for auth status and user info
+// For simplicity, let's use local state and SDK methods directly for now.
 
 // --- Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787/api';
-const websiteLink = ref(import.meta.env.VITE_WEBSITE_LINK || 'http://localhost:5173');
+const R2_PUBLIC_URL_BASE = import.meta.env.VITE_R2_PUBLIC_URL_BASE || 'https://ngu3-signup-bucket.srt.pub';
 const MAX_AVATAR_SIZE_MB = 2;
 
-// --- State Management (Reactive) ---
-const state = reactive({
-    currentStep: 0, // MODIFIED: Start at step 0 (Entry Page)
-    teamCode: null,
-    teamName: null,
-    isNewTeam: false,
-    newTeamName: null,
-    selectedColor: null,
-    selectedJob: null,
-    maimaiId: null,
-    nickname: null,
-    qqNumber: null,
-    privacyAgreed: false,
-    avatarFile: null,
-    avatarPreviewUrl: null,
-    showEditModal: false,
-    editAuthMaimaiId: null,
-    editAuthQqNumber: null,
-    editNewNickname: null,
-    editNewQqNumber: null,
-    editNewColor: null,
-    editNewJob: null,
-    editNewAvatarFile: null,
-    editNewAvatarPreviewUrl: null,
-    editClearAvatarFlag: false,
-    showConfirmModal: false,
-    showCreateModal: false,
-    showLoadingOverlay: false,
-    errorMessage: null,
-    currentTeamMembers: [],
-    completionAllMembers: [],
-    confettiInterval: null,
+// --- State Management ---
+const route = useRoute(); // Get current route
 
-    // Event Info 
-    eventInfo: {
-        title: "NGU 3rd 音游娱乐赛",
-        location: "翡尔堡家庭娱乐中心(郑州万象城三楼店)",
-        time: "2025年5月18日",
-        description: "Never ever and ever... 具体规则以及如有变动，请留意群内公告。 官网链接：https://ngu3rd.mpam-lab.xyz",
-        // rulesLink: "#"
-    }
+const state = reactive({
+    // Existing team check state
+    teamCode: '',
+    teamName: '',
+    teamExists: false,
+    teamMembers: [], // Members fetched during team check
+
+    // ADDED: Kinde Auth State
+    isAuthenticated: false,
+    kindeUser: null, // Kinde user object { id, email, name, ... }
+    isCheckingAuth: true, // Initial check
+
+    // ADDED: User's Registration State
+    userMember: null, // The member object if the logged-in user has registered
+    isCheckingRegistration: false,
+
+    // Form state (used for NEW registration)
+    form: {
+        color: '',
+        job: '',
+        maimaiId: '',
+        nickname: '',
+        qqNumber: '',
+        avatarFile: null,
+        avatarPreviewUrl: null,
+        privacyAgreed: false,
+    },
+
+    // UI State
+    currentStep: 1, // 1: Team Check, 2: Registration Form / User Info
+    isLoading: false,
+    errorMessage: null,
+    successMessage: null, // For registration success
+
+    // Modal State (for user edit/delete)
+    showEditModal: false,
+    editForm: { // Form fields for editing
+        nickname: null,
+        qqNumber: null,
+        color: null,
+        job: null,
+        avatarFile: null,
+        avatarPreviewUrl: null,
+        clearAvatarFlag: false,
+    },
+    editModalErrorMessage: null,
+    isSavingEdit: false,
 });
 
 // --- Computed Properties ---
-const progressWidth = computed(() => {
-    // MODIFIED: Adjust steps for progress calculation (starts from step 2)
-    const stepProgress = { 0: 0, 1: 0, 2: 25, 3: 50, 4: 75, 5: 100 };
-    return `${stepProgress[state.currentStep]}%`;
+// Existing computed properties for color/job text/icons
+function getColorText(colorId) { /* ... */ }
+function getJobText(jobType) { /* ... */ }
+function getIconPath(type, value) { /* ... */ }
+
+// ADDED: Check if a color is available in the user's team (for edit modal)
+const isColorAvailableInUserTeam = computed(() => (color) => {
+    if (!state.userMember || !state.userMember.team_code) return true; // Should not happen if userMember exists
+    const membersInUserTeam = state.teamMembers.filter(m => m.team_code === state.userMember.team_code);
+
+    // The user's current color is always available to them
+    if (state.userMember.color === color) return true;
+
+    // Check if any *other* member in this team has this color
+    return !membersInUserTeam.some(m => m.color === color && m.maimai_id !== state.userMember.maimai_id); // Use maimai_id or id
 });
 
-// ... (isColorDisabled, isJobDisabled, shareLinkUrl 保持不变) ...
-const isColorDisabled = computed(() => (color) => {
-     if (state.showEditModal && state.editAuthMaimaiId) {
-         const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId)?.toString() === state.editAuthMaimaiId?.toString());
-         if (memberBeingEdited && memberBeingEdited.color === color) return false;
-     }
-    return state.currentTeamMembers.some(member => member.color === color);
+// ADDED: Check if a job is available in the user's team (for edit modal)
+const isJobAvailableInUserTeam = computed(() => (job) => {
+    if (!state.userMember || !state.userMember.team_code) return true;
+    const membersInUserTeam = state.teamMembers.filter(m => m.team_code === state.userMember.team_code);
+
+    // The user's current job is always available to them
+    if (state.userMember.job === job) return true;
+
+    // Check if any *other* member in this team has this job
+    return !membersInUserTeam.some(m => m.job === job && m.maimai_id !== state.userMember.maimai_id); // Use maimai_id or id
 });
 
-const isJobDisabled = computed(() => (jobType) => {
-     if (state.showEditModal && state.editAuthMaimaiId) {
-         const memberBeingEdited = state.currentTeamMembers.find(m => (m.maimai_id || m.maimaiId)?.toString() === state.editAuthMaimaiId?.toString());
-         if (memberBeingEdited && memberBeingEdited.job === jobType) return false;
-     }
-    return state.currentTeamMembers.some(member => member.job === jobType);
-});
-
-const shareLinkUrl = computed(() => {
-    if (!state.teamCode) return '';
-    const baseUrl = websiteLink.value.endsWith('/') ? websiteLink.value.slice(0, -1) : websiteLink.value;
-    return `${baseUrl}/?code=${state.teamCode}`;
-});
 
 // --- Methods / Functions ---
 
-// 导航到指定步骤
-function showStep(stepNumber) {
-    // MODIFIED: Check for leaving step 5 (Completion)
-    if (state.currentStep === 5 && state.confettiInterval) {
-        clearInterval(state.confettiInterval);
-        state.confettiInterval = null;
-        const celebrationDiv = document.getElementById('celebration');
-        if(celebrationDiv) celebrationDiv.innerHTML = ''; // 清理 DOM
-    }
-
-    state.currentStep = stepNumber;
-    state.errorMessage = null; // 切换步骤时清除错误信息
-
-    // MODIFIED: Check for entering step 5 (Completion)
-    if (stepNumber === 5) {
-         setTimeout(() => {
-             const celebrationDiv = document.getElementById('celebration');
-             if(celebrationDiv) celebrationDiv.innerHTML = '';
-             createConfetti();
-             state.confettiInterval = setInterval(createConfetti, 2000);
-         }, 100);
+// ADDED: Kinde Auth Methods
+async function login() {
+    state.errorMessage = null;
+    try {
+        await kindeClient.login(); // Redirects to Kinde
+    } catch (e) {
+        console.error("Kinde login failed:", e);
+        state.errorMessage = '登录失败，请稍后再试。';
     }
 }
 
-// 处理输入组队码后的“继续”操作 (API: POST /api/teams/check)
-async function handleContinue() {
-    const code = state.teamCode ? state.teamCode.trim() : '';
-    state.errorMessage = null;
+async function register() {
+     state.errorMessage = null;
+    try {
+        await kindeClient.register(); // Redirects to Kinde
+    } catch (e) {
+        console.error("Kinde register failed:", e);
+        state.errorMessage = '注册失败，请稍后再试。';
+    }
+}
 
-    if (code.length !== 4 || isNaN(parseInt(code))) {
-        state.errorMessage = '请输入4位数字的组队码。';
+async function logout() {
+     state.errorMessage = null;
+    try {
+        await kindeClient.logout(); // Redirects to Kinde
+        // After redirect, the callback page or logout_redirect_uri handles clearing state
+    } catch (e) {
+        console.error("Kinde logout failed:", e);
+        state.errorMessage = '登出失败，请稍后再试。';
+    }
+}
+
+// ADDED: Check Authentication Status and Fetch User Info
+async function checkAuthAndFetchUser() {
+    state.isCheckingAuth = true;
+    state.errorMessage = null;
+    try {
+        state.isAuthenticated = await kindeClient.isAuthenticated();
+        if (state.isAuthenticated) {
+            state.kindeUser = await kindeClient.getUser();
+            console.log("Authenticated Kinde User:", state.kindeUser);
+            // If authenticated, try to fetch their registration info
+            await fetchUserRegistration();
+        } else {
+            state.kindeUser = null;
+            state.userMember = null; // Clear user member state if not authenticated
+        }
+    } catch (e) {
+        console.error("Error checking Kinde auth or getting user:", e);
+        state.errorMessage = '获取登录状态失败。';
+        state.isAuthenticated = false;
+        state.kindeUser = null;
+        state.userMember = null;
+    } finally {
+        state.isCheckingAuth = false;
+    }
+}
+
+// ADDED: Fetch User's Registration Info (API: GET /api/members/me)
+async function fetchUserRegistration() {
+    if (!state.isAuthenticated || !state.kindeUser) {
+        state.userMember = null;
         return;
     }
-
-    state.showLoadingOverlay = true;
-
+    state.isCheckingRegistration = true;
+    state.errorMessage = null;
     try {
-        const response = await fetch(`${API_BASE_URL}/teams/check`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+        // Get the access token to include in the request header
+        const accessToken = await kindeClient.getToken();
+        if (!accessToken) {
+             console.warn("No access token available for fetching user registration.");
+             state.userMember = null;
+             state.errorMessage = '认证信息无效，请重新登录。';
+             // Optionally trigger re-login or token refresh
+             return;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/members/me`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`, // Include the token
+                'Content-Type': 'application/json',
+            },
             mode: 'cors',
-            body: JSON.stringify({ code }),
         });
 
         const data = await response.json();
 
         if (!response.ok) {
-            console.error('API error checking team:', response.status, response.statusText, data);
-            throw new Error(data.error || `检查队伍失败 (${response.status})`);
+             // Handle 401 specifically if token expired/invalid
+             if (response.status === 401 || response.status === 403) {
+                  state.errorMessage = '认证失败，请重新登录。';
+                  // Optionally clear auth state and prompt login
+                  state.isAuthenticated = false;
+                  state.kindeUser = null;
+                  state.userMember = null;
+             } else {
+                console.error('API error fetching user registration:', response.status, data);
+                state.errorMessage = data.error || `获取报名信息失败 (${response.status})`;
+             }
+             state.userMember = null; // Ensure userMember is null on error
+        } else {
+            // Success
+            state.userMember = data.member; // Backend returns { member: {...} } or { member: null }
+            console.log("User Registration Data:", state.userMember);
+            if (state.userMember) {
+                // If user is registered, fetch their team details to show team members
+                state.teamCode = state.userMember.team_code; // Set team code for team check logic
+                await checkTeam(); // Fetch team details and members
+            } else {
+                 // User is authenticated but not registered, clear team info
+                 state.teamCode = '';
+                 state.teamName = '';
+                 state.teamExists = false;
+                 state.teamMembers = [];
+            }
         }
 
-        if (data.exists) {
-            state.teamName = data.name;
-            state.currentTeamMembers = data.members || [];
-            state.isNewTeam = false;
-            state.showConfirmModal = true;
+    } catch (e) {
+        console.error('Fetch error fetching user registration:', e);
+        state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
+        state.userMember = null;
+    } finally {
+        state.isCheckingRegistration = false;
+    }
+}
+
+
+// Existing checkTeam function (MODIFIED to fetch full member details)
+async function checkTeam() {
+    if (!state.teamCode || state.teamCode.length !== 4 || isNaN(parseInt(state.teamCode))) {
+        state.teamExists = false;
+        state.teamName = '';
+        state.teamMembers = [];
+        state.errorMessage = null; // Clear error if code is invalid
+        return;
+    }
+
+    state.isLoading = true;
+    state.errorMessage = null;
+    state.teamExists = false; // Reset state before fetch
+
+    try {
+        // MODIFIED: Use the new GET /api/teams/:code endpoint which returns full member details
+        const response = await fetch(`${API_BASE_URL}/teams/${state.teamCode}`, {
+            method: 'GET', // Changed to GET
+            headers: {
+                'Content-Type': 'application/json',
+                // No auth needed for public team check
+            },
+            mode: 'cors',
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error('API error checking team:', response.status, data);
+             // If team not found (404), it's not an error for the user, just means it doesn't exist
+             if (response.status === 404) {
+                 state.teamExists = false;
+                 state.teamName = '';
+                 state.teamMembers = [];
+                 // No error message for 404, it's expected flow
+             } else {
+                state.errorMessage = data.error || `查询队伍失败 (${response.status})`;
+                state.teamExists = false;
+                state.teamName = '';
+                state.teamMembers = [];
+             }
         } else {
-            state.teamName = null;
-            state.currentTeamMembers = [];
-            state.isNewTeam = true;
-            state.showCreateModal = true;
+            // Team found
+            state.teamExists = true;
+            state.teamCode = data.code; // Ensure state matches fetched data
+            state.teamName = data.name;
+            state.teamMembers = data.members || []; // Assuming backend returns { code, name, members: [...] }
+            state.errorMessage = null; // Clear error on success
         }
 
     } catch (e) {
         console.error('Fetch error checking team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
+        state.teamExists = false;
+        state.teamName = '';
+        state.teamMembers = [];
     } finally {
-       state.showLoadingOverlay = false;
-       console.log('handleContinue finally: showLoadingOverlay set to', state.showLoadingOverlay);
+        state.isLoading = false;
     }
 }
 
-// 确认加入现有队伍 (从模态框点击确认)
-function confirmJoinTeam() {
-    state.showConfirmModal = false;
-    // MODIFIED: Go to step 2 (Color Selection)
-    showStep(2);
-}
+// Existing createTeam function (Keep as is, no auth needed)
+async function createTeam() { /* ... */ }
 
-// 创建新队伍 (API: POST /api/teams/create)
-async function createNewTeam() {
-    const code = state.teamCode ? state.teamCode.trim() : '';
-    const name = state.newTeamName ? state.newTeamName.trim() : '';
+// Existing handleAvatarChange function (Keep as is for NEW registration form)
+function handleAvatarChange(event) { /* ... */ }
+
+// Existing removeAvatar function (Keep as is for NEW registration form)
+function removeAvatar() { /* ... */ }
+
+// Existing submitRegistration function (MODIFIED - Requires Kinde Auth)
+async function submitRegistration() {
     state.errorMessage = null;
+    state.successMessage = null;
 
-    if (!name || name.trim().length === 0 || name.trim().length > 50) {
-        state.errorMessage = '队伍名称不能为空，且不能超过50个字符。';
+    // Basic validation (Keep existing)
+    const form = state.form;
+    if (!form.teamCode || !form.color || !form.job || !form.maimaiId || !form.nickname || !form.qqNumber || !form.privacyAgreed) {
+        state.errorMessage = '请填写所有必填字段并同意隐私条款。';
         return;
     }
-     if (!code || code.length !== 4 || isNaN(parseInt(code))) {
-         state.errorMessage = '无效的组队码。';
+     if (form.teamCode.length !== 4 || isNaN(parseInt(form.teamCode))) {
+         state.errorMessage = '组队码必须是4位数字。';
          return;
      }
+     if (!/^[1-9][0-9]{4,14}$/.test(form.qqNumber.trim())) {
+        state.errorMessage = '请输入有效的QQ号码 (5-15位数字, 非0开头)。';
+        return;
+    }
+     if (form.maimaiId.trim().length === 0 || form.maimaiId.trim().length > 13) {
+         state.errorMessage = '舞萌ID长度不正确 (应 ≤ 13位)。';
+         return;
+     }
+      if (form.nickname.trim().length === 0 || form.nickname.trim().length > 50) {
+          state.errorMessage = '称呼长度需在1到50个字符之间。';
+          return;
+      }
 
-    state.showLoadingOverlay = true;
+    // Check color/job availability in the team (Need to re-fetch team members if not already done or if teamCode changed)
+    // For simplicity, let's rely on backend conflict check for now, or ensure checkTeam is called before showing form.
+    // A more robust approach would check availability client-side before submitting.
+
+    state.isLoading = true;
+
+    const formData = new FormData();
+    formData.append('teamCode', form.teamCode.trim());
+    formData.append('color', form.color);
+    formData.append('job', form.job);
+    formData.append('maimaiId', form.maimaiId.trim());
+    formData.append('nickname', form.nickname.trim());
+    formData.append('qqNumber', form.qqNumber.trim());
+    if (form.avatarFile) {
+        formData.append('avatarFile', form.avatarFile);
+    }
+    // privacyAgreed is handled client-side validation, not sent to backend
 
     try {
-        const response = await fetch(`${API_BASE_URL}/teams/create`, {
+        // Get the access token to include in the request header
+        const accessToken = await kindeClient.getToken();
+         if (!accessToken) {
+             state.errorMessage = '认证信息无效，请重新登录。';
+             state.isAuthenticated = false; state.kindeUser = null; state.userMember = null;
+             state.isLoading = false;
+             return;
+         }
+
+        const response = await fetch(`${API_BASE_URL}/teams/join`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Authorization': `Bearer ${accessToken}`, // Include the token
+                // Content-Type is automatically set to multipart/form-data by fetch with FormData
+            },
             mode: 'cors',
-            body: JSON.stringify({ code, name: name.trim() }),
+            body: formData,
         });
 
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-             console.error('API error creating team:', response.status, data);
-             throw new Error(data.error || `创建队伍失败 (${response.status})`);
-        }
+            console.error('API error submitting registration:', response.status, data);
+             // Handle 401/403 specifically
+             if (response.status === 401 || response.status === 403) {
+                  state.errorMessage = '认证失败，请重新登录。';
+                  state.isAuthenticated = false; state.kindeUser = null; state.userMember = null;
+             } else {
+                state.errorMessage = data.error || `报名失败 (${response.status})`;
+             }
+        } else {
+            // Registration successful
+            state.successMessage = '报名成功！';
+            console.log('Registration successful:', data);
 
-        state.teamName = data.name;
-        state.currentTeamMembers = [];
-        state.showCreateModal = false;
-        // MODIFIED: Go to step 2 (Color Selection)
-        showStep(2);
+            // Update local state with the new member info
+            // The backend returns the updated team members, but not the specific new member with ID etc.
+            // A better approach is for the backend to return the newly created member object.
+            // Assuming backend returns the new member object in 'data.member' (update backend if needed)
+            // Or, re-fetch user registration after success
+            await fetchUserRegistration(); // Re-fetch user's registration status and data
+
+            // Optionally reset form or redirect
+            // state.form = { ... }; // Reset form fields
+            // state.currentStep = 1; // Go back to team check (or show success message)
+
+            // Clear success message after a delay
+            setTimeout(() => { state.successMessage = null; }, 3000);
+        }
 
     } catch (e) {
-        console.error('Fetch error creating team:', e);
+        console.error('Fetch error submitting registration:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-        state.showCreateModal = false;
     } finally {
-        state.showLoadingOverlay = false;
+        state.isLoading = false;
     }
 }
 
-// 选择颜色
-function selectColor(color) {
-    if (!isColorDisabled.value(color)) {
-        state.selectedColor = color;
-    }
-}
+// ADDED: Open Edit Member Modal (for logged-in user)
+function openEditModal() {
+    if (!state.userMember) return; // Should only be called if user is registered
 
-// 获取颜色显示文本
-function getColorText(colorId) {
-     const map = { red: '火', green: '木', blue: '水' };
-     return map[colorId] || '';
-}
-
-// 获取本地 SVG 路径
-function getIconPath(type, value) {
-    const paths = {
-        color: {
-            red: '/fire.svg',
-            green: '/wood.svg',
-            blue: '/water.svg'
-        },
-        job: {
-            attacker: '/attacker.svg',
-            defender: '/defender.svg',
-            supporter: '/supporter.svg'
-        }
+    state.showEditModal = true;
+    state.editModalErrorMessage = null;
+    // Populate edit form from userMember data
+    state.editForm = {
+        nickname: state.userMember.nickname,
+        qqNumber: state.userMember.qq_number,
+        color: state.userMember.color,
+        job: state.userMember.job,
+        avatarFile: null, // No file selected initially
+        avatarPreviewUrl: state.userMember.avatar_url, // Show current avatar
+        clearAvatarFlag: false, // Not checked initially
     };
-    return paths[type]?.[value] || '';
 }
 
-// 选择职业
-function selectJob(jobId) {
-     const jobType = jobId.replace('job-', '');
-    if (!isJobDisabled.value(jobType)) {
-        state.selectedJob = jobType;
+// ADDED: Close Edit Modal
+function closeEditModal() {
+    state.showEditModal = false;
+    state.editModalErrorMessage = null;
+     if (state.editForm.avatarPreviewUrl && state.editForm.avatarPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(state.editForm.avatarPreviewUrl);
     }
+    state.editForm = { ... }; // Reset form state
 }
 
-// 获取职业显示文本
-function getJobText(jobType) {
-    const map = { attacker: '绝剑士', defender: '矩盾手', supporter: '炼星师' };
-    return map[jobType] || '';
-}
-
-// Step 4: 处理头像文件选择和预览
-function handleAvatarChange(event) {
+// ADDED: Handle Avatar File Change in Edit Modal
+function handleEditModalAvatarChange(event) {
     const file = event.target.files?.[0];
-    state.errorMessage = null;
+    state.editModalErrorMessage = null;
 
     if (!file) {
-        state.avatarFile = null;
-        if (state.avatarPreviewUrl) {
-            URL.revokeObjectURL(state.avatarPreviewUrl);
+        state.editForm.avatarFile = null;
+         if (state.editForm.avatarPreviewUrl && state.editForm.avatarPreviewUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(state.editForm.avatarPreviewUrl);
         }
-        state.avatarPreviewUrl = null;
+        state.editForm.avatarPreviewUrl = state.userMember ? state.userMember.avatar_url : null; // Restore original
+        state.editForm.clearAvatarFlag = false;
+         const avatarInput = document.getElementById('edit-modal-avatar-upload');
+         if(avatarInput) avatarInput.value = null;
         return;
     }
 
     const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
-        state.errorMessage = '请选择有效的图片文件 (PNG, JPG, GIF, WEBP)。';
-        event.target.value = '';
-        state.avatarFile = null;
-         return;
+        state.editModalErrorMessage = '请选择有效的图片文件 (PNG, JPG, GIF, WEBP)。';
+        event.target.value = ''; state.editForm.avatarFile = null; return;
     }
     const sizeLimitBytes = MAX_AVATAR_SIZE_MB * 1024 * 1024;
     if (file.size > sizeLimitBytes) {
-        state.errorMessage = `图片大小不能超过 ${MAX_AVATAR_SIZE_MB}MB。`;
-         event.target.value = '';
-         state.avatarFile = null;
-        return;
+        state.editModalErrorMessage = `图片大小不能超过 ${MAX_AVATAR_SIZE_MB}MB。`;
+         event.target.value = ''; state.editForm.avatarFile = null; return;
     }
 
-    state.avatarFile = file;
-
-    if (state.avatarPreviewUrl) {
-        URL.revokeObjectURL(state.avatarPreviewUrl);
-    }
-    state.avatarPreviewUrl = URL.createObjectURL(file);
-    console.log("Avatar file selected:", file.name, "Preview URL:", state.avatarPreviewUrl);
+    state.editForm.avatarFile = file;
+     if (state.editForm.avatarPreviewUrl && state.editForm.avatarPreviewUrl.startsWith('blob:')) {
+         URL.revokeObjectURL(state.editForm.avatarPreviewUrl);
+     }
+     state.editForm.avatarPreviewUrl = URL.createObjectURL(file);
+     state.editForm.clearAvatarFlag = false;
 }
 
-// step 4: 提交个人信息 (API: POST /api/teams/join)
-async function handleSubmitPersonalInfo() {
-    state.errorMessage = null;
+// ADDED: Remove the selected new avatar file in the Edit modal
+function removeEditModalAvatar() {
+    state.editForm.avatarFile = null;
+    if (state.editForm.avatarPreviewUrl && state.editForm.avatarPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(state.editForm.avatarPreviewUrl);
+    }
+    state.editForm.avatarPreviewUrl = state.userMember ? state.userMember.avatar_url : null;
+     const avatarInput = document.getElementById('edit-modal-avatar-upload');
+     if(avatarInput) avatarInput.value = null;
+     console.log("Edit Modal: Selected new avatar file removed.");
+}
 
-    if (!state.maimaiId || !state.nickname || !state.qqNumber || !state.privacyAgreed) {
-        state.errorMessage = '请填写所有必填字段并同意隐私政策。';
+
+// ADDED: Save Member Edit (API: PATCH /api/members/:maimaiId)
+async function saveMemberEdit() {
+    state.editModalErrorMessage = null;
+    if (!state.userMember) return; // Should only be called if user is registered
+
+    // Basic validation (similar to registration)
+    const form = state.editForm;
+    if (!form.nickname || !form.qqNumber || !form.color || !form.job) {
+        state.editModalErrorMessage = '请填写所有必填字段。';
         return;
     }
-     if (!state.selectedColor || !state.selectedJob) {
-         state.errorMessage = '内部错误：颜色或职业未选择。请返回上一步。';
-         return;
-     }
-    if (!/^[1-9][0-9]{4,14}$/.test(state.qqNumber.trim())) {
-        state.errorMessage = '请输入有效的QQ号码 (5-15位数字, 非0开头)。';
+     if (!/^[1-9][0-9]{4,14}$/.test(form.qqNumber.trim())) {
+        state.editModalErrorMessage = '请输入有效的QQ号码 (5-15位数字, 非0开头)。';
         return;
     }
-     if (state.maimaiId.trim().length === 0 || state.maimaiId.trim().length > 13) {
-         state.errorMessage = '舞萌ID长度不正确 (应 ≤ 13位)。';
-         return;
-     }
-      if (state.nickname.trim().length === 0 || state.nickname.trim().length > 50) {
-          state.errorMessage = '称呼长度需在1到50个字符之间。';
+      if (form.nickname.trim().length === 0 || form.nickname.trim().length > 50) {
+          state.editModalErrorMessage = '称呼长度需在1到50个字符之间。';
           return;
       }
 
-    state.showLoadingOverlay = true;
+    // Check color/job availability in the user's team (client-side check)
+    if (form.color !== state.userMember.color && !isColorAvailableInUserTeam.value(form.color)) {
+         state.editModalErrorMessage = `颜色 '${getColorText(form.color)}' 在你的队伍中已被占用。`;
+         return;
+    }
+     if (form.job !== state.userMember.job && !isJobAvailableInUserTeam.value(form.job)) {
+         state.editModalErrorMessage = `职业 '${getJobText(form.job)}' 在你的队伍中已被占用。`;
+         return;
+     }
+
+
+    state.isSavingEdit = true; // Use a separate loading state for the modal
+
+    const formData = new FormData();
+    // Only append fields that might have changed
+    if (form.nickname !== state.userMember.nickname) formData.append('nickname', form.nickname.trim());
+    if (form.qqNumber !== state.userMember.qq_number) formData.append('qqNumber', form.qqNumber.trim());
+    if (form.color !== state.userMember.color) formData.append('color', form.color);
+    if (form.job !== state.userMember.job) formData.append('job', form.job);
+
+    // Handle avatar file and clear flag
+    if (form.avatarFile) {
+        formData.append('avatarFile', form.avatarFile);
+        formData.append('clearAvatar', 'false'); // New file overrides clear
+    } else if (form.clearAvatarFlag) {
+        formData.append('clearAvatar', 'true');
+    }
+    // If neither a new file nor clear flag is set, don't append anything for avatar, backend ignores it.
+
 
     try {
-        const formData = new FormData();
-        formData.append('teamCode', state.teamCode.trim());
-        formData.append('color', state.selectedColor);
-        formData.append('job', state.selectedJob);
-        formData.append('maimaiId', state.maimaiId.trim());
-        formData.append('nickname', state.nickname.trim());
-        formData.append('qqNumber', state.qqNumber.trim());
+        // Get the access token
+        const accessToken = await kindeClient.getToken();
+         if (!accessToken) {
+             state.editModalErrorMessage = '认证信息无效，请重新登录。';
+             state.isAuthenticated = false; state.kindeUser = null; state.userMember = null;
+             state.isSavingEdit = false;
+             closeEditModal();
+             return;
+         }
 
-        if (state.avatarFile) {
-            formData.append('avatarFile', state.avatarFile);
-            console.log("Appending avatar file to FormData:", state.avatarFile.name);
-        } else {
-            console.log("No avatar file selected for join request.");
-        }
-
-        const response = await fetch(`${API_BASE_URL}/teams/join`, {
-            method: 'POST',
+        // Use the user's Maimai ID in the URL path
+        const response = await fetch(`${API_BASE_URL}/members/${state.userMember.maimai_id}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`, // Include the token
+                // Content-Type is automatically set to multipart/form-data
+            },
             mode: 'cors',
             body: formData,
         });
 
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-             console.error('API error joining team:', response.status, data);
-              throw new Error(data.error || `加入队伍失败 (${response.status})`);
-        }
-
-        state.completionAllMembers = data.members || [];
-        state.teamName = data.name;
-        console.log("Successfully joined team. Data:", data);
-        // MODIFIED: Go to step 5 (Completion)
-        showStep(5);
-
-    } catch (e) {
-        console.error('Fetch error joining team:', e);
-        state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-         if (e.message.includes('Maimai ID already exists')) {
-             state.errorMessage = '该舞萌ID已在该队伍中注册，请勿重复加入或选择修改/删除。';
-         } else if (e.message.includes('team member limit')) {
-             state.errorMessage = '队伍成员已满，无法加入。';
-         }
-    } finally {
-        state.showLoadingOverlay = false;
-    }
-}
-
-// 复制分享链接
-function copyShareLink() {
-    const urlToCopy = shareLinkUrl.value;
-    if (!urlToCopy) return;
-
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(urlToCopy).then(() => {
-            handleCopyFeedback();
-        }).catch(err => {
-            console.error('Failed to copy using Clipboard API:', err);
-            fallbackCopyTextToClipboard(urlToCopy);
-        });
-    } else {
-        fallbackCopyTextToClipboard(urlToCopy);
-    }
-}
-
-function handleCopyFeedback() {
-     const copyBtn = document.getElementById('copyBtn');
-     if (copyBtn) {
-         const originalIconHTML = copyBtn.innerHTML;
-         copyBtn.innerHTML = '<img src="https://unpkg.com/lucide-static@latest/icons/check.svg" class="w-5 h-5 text-white" alt="Copied">';
-         copyBtn.disabled = true;
-         setTimeout(() => {
-             copyBtn.innerHTML = originalIconHTML;
-             copyBtn.disabled = false;
-         }, 2000);
-     }
-}
-
-function fallbackCopyTextToClipboard(text) {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.top = "0";
-    textarea.style.left = "0";
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-
-    try {
-        const successful = document.execCommand('copy');
-        if (successful) {
-            console.log('Fallback copying successful!');
-            handleCopyFeedback();
+            console.error('API error saving member edit:', response.status, data);
+             if (response.status === 401 || response.status === 403) {
+                  state.editModalErrorMessage = '认证失败，请重新登录。';
+                  state.isAuthenticated = false; state.kindeUser = null; state.userMember = null;
+                  closeEditModal();
+             } else {
+                state.editModalErrorMessage = data.error || `保存更改失败 (${response.status})`;
+             }
         } else {
-            console.error('Fallback copying unsuccessful.');
-            alert(`复制失败，请手动复制链接：\n${text}`);
+            // Edit successful
+            state.editModalErrorMessage = '信息更新成功！';
+            console.log('Member edit successful:', data);
+
+            // Update local userMember state with the returned data
+            state.userMember = data.member; // Backend returns the updated member
+
+            // Re-fetch team details to update the team member list display
+            await checkTeam();
+
+            // Close modal after a short delay
+            setTimeout(() => {
+                closeEditModal();
+                state.errorMessage = null; // Clear global error if any
+            }, 1500);
         }
-    } catch (err) {
-        console.error('Fallback: Oops, unable to copy', err);
-        alert(`复制失败，请手动复制链接：\n${text}`);
-    }
 
-    document.body.removeChild(textarea);
-}
-
-// 返回首页并重置所有相关状态
-function goHome() {
-    if (state.avatarPreviewUrl) {
-        URL.revokeObjectURL(state.avatarPreviewUrl);
-    }
-     if (state.editNewAvatarPreviewUrl) {
-         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-     }
-
-    // MODIFIED: Reset currentStep to 0
-    Object.assign(state, {
-        currentStep: 0, // Reset to Entry Page
-        teamCode: null,
-        teamName: null,
-        isNewTeam: false,
-        newTeamName: null,
-        selectedColor: null,
-        selectedJob: null,
-        maimaiId: null,
-        nickname: null,
-        qqNumber: null,
-        privacyAgreed: false,
-        avatarFile: null,
-        avatarPreviewUrl: null,
-        showEditModal: false,
-        editAuthMaimaiId: null,
-        editAuthQqNumber: null,
-        editNewNickname: null,
-        editNewQqNumber: null,
-        editNewColor: null,
-        editNewJob: null,
-        editNewAvatarFile: null,
-        editNewAvatarPreviewUrl: null,
-        editClearAvatarFlag: false,
-        showConfirmModal: false,
-        showCreateModal: false,
-        showLoadingOverlay: false,
-        errorMessage: null,
-        currentTeamMembers: [],
-        completionAllMembers: [],
-        confettiInterval: null,
-    });
-
-    const celebrationDiv = document.getElementById('celebration');
-    if(celebrationDiv) celebrationDiv.innerHTML = '';
-    history.replaceState(null, '', window.location.pathname);
-}
-
-// Confetti 动画
-function createConfetti() {
-    const celebrationDiv = document.getElementById('celebration');
-    if (!celebrationDiv) return;
-    const confettiCount = 20;
-    const colors = ['#ff5f6d', '#00b09b', '#4facfe', '#a78bfa', '#fcd34d', '#ff9a9e', '#fad0c4', '#a1c4fd', '#c2e9fb', '#d4fc79'];
-
-    for (let i = 0; i < confettiCount; i++) {
-        const confetti = document.createElement('div');
-        confetti.classList.add('confetti');
-        const randomColor = colors[Math.floor(Math.random() * colors.length)];
-        confetti.style.backgroundColor = randomColor;
-        const startX = Math.random() * 120 - 10;
-        confetti.style.left = startX + 'vw';
-        const startY = -10 - (Math.random() * 20);
-        confetti.style.top = startY + 'vh';
-        const size = Math.random() * 10 + 5;
-        confetti.style.width = size + 'px';
-        confetti.style.height = size + 'px';
-        const duration = Math.random() * 4 + 2;
-        confetti.style.animationDuration = duration + 's';
-        const delay = Math.random() * 3;
-        confetti.style.animationDelay = delay + 's';
-         const startRotate = Math.random() * 360;
-         const endRotate = startRotate + (Math.random() > 0.5 ? 720 : -720);
-         confetti.style.setProperty('--start-rotate', `${startRotate}deg`);
-         confetti.style.setProperty('--end-rotate', `${endRotate}deg`);
-         confetti.style.setProperty('--end-y', '105vh');
-        celebrationDiv.appendChild(confetti);
-        confetti.addEventListener('animationend', () => { confetti.remove(); });
-         setTimeout(() => confetti.remove(), duration * 1000 + delay * 1000 + 500);
-    }
-}
-
-// --- Edit/Delete Modal Functions ---
-function openEditModal(maimaiIdToEdit = null) {
-   state.editAuthMaimaiId = maimaiIdToEdit !== null ? maimaiIdToEdit.toString() : null;
-   state.editAuthQqNumber = null;
-   state.editNewNickname = null;
-   state.editNewQqNumber = null;
-   state.editNewColor = null;
-   state.editNewJob = null;
-   state.editNewAvatarFile = null;
-   if (state.editNewAvatarPreviewUrl) {
-       URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-   }
-   state.editNewAvatarPreviewUrl = null;
-   state.editClearAvatarFlag = false;
-   state.errorMessage = null;
-   state.showEditModal = true;
-   console.log("Edit modal opened. Pre-filled Maimai ID:", maimaiIdToEdit);
-}
-function closeEditModal() {
-   console.log("Closing edit modal.");
-   state.showEditModal = false;
-   state.errorMessage = null;
-    if (state.editNewAvatarPreviewUrl) {
-        URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-        state.editNewAvatarPreviewUrl = null;
-    }
-    state.editAuthMaimaiId = null;
-    state.editAuthQqNumber = null;
-    state.editNewNickname = null;
-    state.editNewQqNumber = null;
-    state.editNewColor = null;
-    state.editNewJob = null;
-    state.editNewAvatarFile = null;
-    state.editClearAvatarFlag = false;
-}
-function handleEditAvatarChange(event) {
-    const file = event.target.files?.[0];
-    state.errorMessage = null;
-    if (!file) {
-        state.editNewAvatarFile = null;
-         if (state.editNewAvatarPreviewUrl) {
-            URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-        }
-        state.editNewAvatarPreviewUrl = null;
-        state.editClearAvatarFlag = false;
-         const editAvatarInput = document.getElementById('edit-avatar-upload');
-         if(editAvatarInput) editAvatarInput.value = null;
-        return;
-    }
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-     if (!allowedTypes.includes(file.type)) {
-         state.errorMessage = '请选择有效的图片文件 (PNG, JPG, GIF, WEBP)。';
-         event.target.value = '';
-         state.editNewAvatarFile = null;
-         return;
-     }
-     const sizeLimitBytes = MAX_AVATAR_SIZE_MB * 1024 * 1024;
-     if (file.size > sizeLimitBytes) {
-         state.errorMessage = `图片大小不能超过 ${MAX_AVATAR_SIZE_MB}MB。`;
-         event.target.value = '';
-         state.editNewAvatarFile = null;
-         return;
-     }
-    state.editNewAvatarFile = file;
-     if (state.editNewAvatarPreviewUrl) {
-         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-     }
-     state.editNewAvatarPreviewUrl = URL.createObjectURL(file);
-     console.log("Edit modal: Avatar file selected:", file.name, "Preview URL:", state.editNewAvatarPreviewUrl);
-     state.editClearAvatarFlag = false;
-}
-function removeEditAvatar() {
-    state.editNewAvatarFile = null;
-    if (state.editNewAvatarPreviewUrl) {
-        URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-        state.editNewAvatarPreviewUrl = null;
-    }
-     const editAvatarInput = document.getElementById('edit-avatar-upload');
-     if(editAvatarInput) editAvatarInput.value = null;
-     console.log("Edit modal: Selected new avatar file removed.");
-}
-async function saveChanges() {
-    state.errorMessage = null;
-    if (!state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()) {
-         state.errorMessage = '请输入舞萌ID和当前QQ号进行验证才能保存。';
-         return;
-    }
-    if (!/^[1-9][0-9]{4,14}$/.test(state.editAuthQqNumber.trim())) {
-         state.errorMessage = '验证QQ号码格式不正确。';
-         return;
-    }
-    if (state.editAuthMaimaiId.trim().length === 0 || state.editAuthMaimaiId.trim().length > 13) {
-        state.errorMessage = '验证舞萌ID长度不正确 (应 ≤ 13位)。';
-        return;
-    }
-     if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '' && !/^[1-9][0-9]{4,14}$/.test(state.editNewQqNumber.trim())) {
-         state.errorMessage = '请输入有效的QQ号码（修改）。';
-         return;
-     }
-      if (state.editNewNickname !== null && state.editNewNickname.trim() !== '' && (state.editNewNickname.trim().length === 0 || state.editNewNickname.trim().length > 50)) {
-          state.errorMessage = '新称呼长度需在1到50个字符之间。';
-          return;
-      }
-    state.showLoadingOverlay = true;
-    try {
-        const formData = new FormData();
-        formData.append('qqNumberAuth', state.editAuthQqNumber.trim());
-         if (state.editNewNickname !== null && state.editNewNickname.trim() !== '') formData.append('nickname', state.editNewNickname.trim());
-         if (state.editNewQqNumber !== null && state.editNewQqNumber.trim() !== '') formData.append('qqNumber', state.editNewQqNumber.trim());
-         if (state.editNewColor !== null && state.editNewColor !== '') formData.append('color', state.editNewColor);
-         if (state.editNewJob !== null && state.editNewJob !== '') formData.append('job', state.editNewJob);
-        if (state.editNewAvatarFile) {
-            formData.append('avatarFile', state.editNewAvatarFile);
-            formData.append('clearAvatar', 'false');
-             console.log("Appending new avatar file for update.");
-         } else if (state.editClearAvatarFlag) {
-            formData.append('clearAvatar', 'true');
-             console.log("Appending clearAvatar=true for update.");
-         }
-        console.log("Sending PATCH request to:", `${API_BASE_URL}/members/${state.editAuthMaimaiId.trim()}`);
-         const response = await fetch(`${API_BASE_URL}/members/${state.editAuthMaimaiId.trim()}`, {
-             method: 'PATCH',
-             mode: 'cors',
-             body: formData,
-         });
-        const data = await response.json();
-        if (!response.ok) {
-             console.error('API error saving changes:', response.status, data);
-             let errorMsg = data.error || `保存修改失败 (${response.status})`;
-             if (data.error?.includes('Authorization failed')) {
-                 errorMsg = '舞萌ID 或 QQ 号不匹配，无法验证身份。';
-             } else if (data.error?.includes('already taken')) {
-                 errorMsg = '选择的颜色/职业已被队伍其他成员占用。';
-             }
-             throw new Error(errorMsg);
-        }
-        console.log('Changes saved successfully:', data);
-        state.errorMessage = '信息更新成功！';
-         if (data.member) {
-             const updatedMaimaiId = data.member.maimai_id?.toString() || data.member.maimaiId?.toString();
-             if (updatedMaimaiId) {
-                 const indexCompletion = state.completionAllMembers.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
-                 if (indexCompletion !== -1) {
-                      state.completionAllMembers[indexCompletion] = { ...state.completionAllMembers[indexCompletion], ...data.member };
-                     console.log("Updated member in completionAllMembers array.");
-                 } else {
-                    console.warn("Updated member not found in completionAllMembers array after PATCH.");
-                 }
-                 const indexCurrent = state.currentTeamMembers.findIndex(m => (m.maimai_id || m.maimaiId)?.toString() === updatedMaimaiId);
-                  if (indexCurrent !== -1) {
-                      state.currentTeamMembers[indexCurrent] = {
-                           ...state.currentTeamMembers[indexCurrent],
-                           maimai_id: data.member.maimai_id,
-                           nickname: data.member.nickname,
-                           color: data.member.color,
-                           job: data.member.job,
-                           avatar_url: data.member.avatar_url,
-                       };
-                       console.log("Updated member in currentTeamMembers array.");
-                  }
-             } else {
-                  console.warn("PATCH success response did not include a member object with maimai_id.");
-             }
-         }
-         setTimeout(() => {
-             closeEditModal();
-             state.errorMessage = null;
-         }, 1500);
     } catch (e) {
-        console.error('Fetch error saving changes:', e);
-        state.errorMessage = e.message || '保存修改失败，请稍后再试。';
+        console.error('Fetch error saving member edit:', e);
+        state.editModalErrorMessage = e.message || '连接服务器失败，请稍后再试。';
     } finally {
-        state.showLoadingOverlay = false;
+        state.isSavingEdit = false;
     }
 }
-async function deleteEntry() {
-     state.errorMessage = null;
-    if (!state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()) {
-         state.errorMessage = '请输入舞萌ID和当前QQ号进行验证才能删除。';
-         return;
+
+// ADDED: Delete Member (for logged-in user) (API: DELETE /api/members/:maimaiId)
+async function deleteMember() {
+    if (!state.userMember) return; // Should only be called if user is registered
+
+    if (!window.confirm('确定要删除你的报名信息吗？此操作不可撤销！')) {
+        return; // User cancelled
     }
-    if (!/^[1-9][0-9]{4,14}$/.test(state.editAuthQqNumber.trim())) {
-         state.errorMessage = '验证QQ号码格式不正确。';
-         return;
-    }
-     if (state.editAuthMaimaiId.trim().length === 0 || state.editAuthMaimaiId.trim().length > 13) {
-         state.errorMessage = '验证舞萌ID长度不正确。';
-         return;
-     }
-    if (!window.confirm(`确定要删除 Maimai ID 为 "${state.editAuthMaimaiId.trim()}" 的报名信息吗？此操作无法撤销！`)) {
-        console.log("Delete cancelled by user via confirm dialog.");
-        return;
-    }
-    state.showLoadingOverlay = true;
+
+    state.isLoading = true; // Use global loading for delete
+    state.errorMessage = null;
+
     try {
-         const response = await fetch(`${API_BASE_URL}/members/${state.editAuthMaimaiId.trim()}`, {
-             method: 'DELETE',
-             headers: { 'Content-Type': 'application/json' },
-             mode: 'cors',
-             body: JSON.stringify({ qqNumberAuth: state.editAuthQqNumber.trim() }),
-         });
-
-         if (response.status === 204) {
-             console.log('Deletion successful (received 204 No Content).');
-             state.completionAllMembers = state.completionAllMembers.filter(
-                  member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
-             );
-             state.currentTeamMembers = state.currentTeamMembers.filter(
-                 member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
-             );
-             console.log(`Removed member ${state.editAuthMaimaiId.trim()} from local state.`);
-              closeEditModal();
-             state.errorMessage = '报名信息已成功删除！';
-             if (state.showConfirmModal) {
-                 state.showConfirmModal = false;
-             }
-             // MODIFIED: Check currentStep is 5 for completion page logic
-             if (state.completionAllMembers.length === 0 && state.currentStep === 5) {
-                  console.log("Team is now empty after deletion from Step 5. Navigating home.");
-                  setTimeout(() => {
-                       goHome();
-                        state.errorMessage = null;
-                  }, 2000);
-             } else if (state.completionAllMembers.length > 0 && state.currentStep === 5) {
-                   state.errorMessage = '报名信息已成功删除！队伍列表已更新。';
-             } else {
-                  console.log("Deletion happened from modal on a step other than 5.");
-                  // MODIFIED: Check currentStep is 1 for team code page logic
-                   if (!state.showConfirmModal && !state.showCreateModal && state.currentStep === 1) {
-                         state.errorMessage = '报名信息已成功删除！';
-                         setTimeout(() => { state.errorMessage = null; }, 3000);
-                   }
-             }
-         } else if (response.ok) {
-             const data = await response.json();
-              console.log('Deletion successful (unexpected 2xx):', data);
-               state.completionAllMembers = state.completionAllMembers.filter(
-                   member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
-               );
-               state.currentTeamMembers = state.currentTeamMembers.filter(
-                  member => (member.maimai_id || member.maimaiId)?.toString() !== state.editAuthMaimaiId.trim()?.toString()
-               );
-              closeEditModal();
-                state.errorMessage = '报名信息已成功删除！';
-                if (state.showConfirmModal) state.showConfirmModal = false;
-              // MODIFIED: Check currentStep is 5
-              if (state.completionAllMembers.length === 0 && state.currentStep === 5) { setTimeout(() => { goHome(); state.errorMessage = null; }, 2000); }
-         } else {
-             const data = await response.json();
-             console.error('API error deleting entry:', response.status, data);
-             let errorMsg = data.error || `删除信息失败 (${response.status})`;
-             if (data.error?.includes('Authorization failed')) {
-                 errorMsg = '舞萌ID 或 QQ 号不匹配，无法验证身份。';
-             } else if (data.error?.includes('not found')) {
-                  errorMsg = '未找到匹配的报名信息。';
-             }
-            throw new Error(errorMsg);
+        const accessToken = await kindeClient.getToken();
+         if (!accessToken) {
+             state.errorMessage = '认证信息无效，请重新登录。';
+             state.isAuthenticated = false; state.kindeUser = null; state.userMember = null;
+             state.isLoading = false;
+             return;
          }
+
+        // Use the user's Maimai ID in the URL path
+        const response = await fetch(`${API_BASE_URL}/members/${state.userMember.maimai_id}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`, // Include the token
+            },
+            mode: 'cors',
+        });
+
+        // DELETE might return 204 No Content on success
+        if (response.status === 204 || response.ok) { // Check for 204 or any 2xx
+            console.log(`Member ${state.userMember.maimai_id} deleted successfully.`);
+            state.successMessage = '报名信息已成功删除。';
+
+            // Clear user member state and reset to step 1
+            state.userMember = null;
+            state.currentStep = 1;
+            state.teamCode = ''; // Clear team code to reset team check section
+            state.teamName = '';
+            state.teamExists = false;
+            state.teamMembers = [];
+            state.form = { ... }; // Reset registration form
+
+             setTimeout(() => { state.successMessage = null; }, 3000); // Clear success message
+
+        } else {
+            const data = await response.json().catch(() => ({}));
+            console.error(`API error deleting member ${state.userMember.maimai_id}:`, response.status, data);
+             if (response.status === 401 || response.status === 403) {
+                  state.errorMessage = '认证失败，请重新登录。';
+                  state.isAuthenticated = false; state.kindeUser = null; state.userMember = null;
+             } else {
+                state.errorMessage = data.error || `删除报名信息失败 (${response.status})`;
+             }
+        }
+
     } catch (e) {
-        console.error('Fetch error deleting entry:', e);
-         state.errorMessage = e.message || '删除失败，请稍后再试。';
+        console.error('Fetch error deleting member:', e);
+        state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
     } finally {
-        state.showLoadingOverlay = false;
+        state.isLoading = false;
     }
 }
 
-// 创建三角形背景函数
-function createTriangleBackground() {
-    const trianglesContainer = document.getElementById('triangles');
-    if (!trianglesContainer) return;
-
-    // 使用紫色系列颜色替代蓝色
-    const colors = ['#c4b5fd', '#a78bfa', '#8b5cf6', '#7c3aed', '#6d28d9'];
-    const triangleCount = 50;
-
-    for (let i = 0; i < triangleCount; i++) {
-        const triangle = document.createElement('div');
-        triangle.classList.add('triangle');
-
-        // 随机大小
-        const size = Math.random() * 100 + 50;
-
-        // 随机位置
-        const left = Math.random() * 100;
-        const top = Math.random() * 100 + 100; // 从底部开始
-
-        // 随机颜色
-        const color = colors[Math.floor(Math.random() * colors.length)];
-
-        // 随机动画持续时间
-        const duration = Math.random() * 30 + 20;
-
-        // 随机动画延迟
-        const delay = Math.random() * 30;
-
-        // 设置三角形样式
-        triangle.style.borderLeft = `${size / 2}px solid transparent`;
-        triangle.style.borderRight = `${size / 2}px solid transparent`;
-        triangle.style.borderBottom = `${size}px solid ${color}`;
-        triangle.style.left = `${left}%`;
-        triangle.style.top = `${top}%`;
-        triangle.style.animationDuration = `${duration}s`;
-        triangle.style.animationDelay = `${delay}s`;
-
-        trianglesContainer.appendChild(triangle);
-    }
-}
 
 // --- Lifecycle Hooks ---
-
 onMounted(() => {
-    // 页面加载时检查 URL 是否有组队码
-    const urlParams = new URLSearchParams(window.location.search);
-    const codeParam = urlParams.get('code');
+    // Check auth status and fetch user registration on mount
+    checkAuthAndFetchUser();
 
-    if (codeParam && codeParam.length === 4 && !isNaN(parseInt(codeParam))) {
-        state.teamCode = codeParam;
-        // MODIFIED: Go to step 1 first, then trigger handleContinue
-        showStep(1); // Show the team code input step
-         setTimeout(() => {
-             handleContinue(); // Auto-trigger check after showing the step
-         }, 100);
-    } else {
-       // MODIFIED: Ensure initial step (0) is shown if no code param
-       showStep(state.currentStep); // Should be 0 initially
+    // Check if there's a redirect query param after login/register
+    if (route.query.redirect) {
+         // You could potentially redirect the user back here
+         // Or just clear the query param
+         // router.replace({ query: {} }); // Clear query params
     }
-    // 创建三角形背景
-    createTriangleBackground();
+     // Check for login/register success messages from Kinde callback if needed
+     // Kinde callback endpoint on backend sets cookies, frontend just needs to know it happened
+     // checkAuthAndFetchUser handles the state update after callback redirect
 });
 
 onUnmounted(() => {
-    // Clean up confetti interval
-    if (state.confettiInterval) {
-        clearInterval(state.confettiInterval);
-        state.confettiInterval = null;
-         const celebrationDiv = document.getElementById('celebration');
-         if(celebrationDiv) celebrationDiv.innerHTML = '';
+    // Clean up avatar preview URL if modal was open
+     if (state.form.avatarPreviewUrl && state.form.avatarPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(state.form.avatarPreviewUrl);
     }
-    // Clean up Step 4 avatar preview Object URL
-    if (state.avatarPreviewUrl) {
-        URL.revokeObjectURL(state.avatarPreviewUrl);
-    }
-    // Clean up edit modal avatar preview Object URL
-     if (state.editNewAvatarPreviewUrl) {
-        URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
-    }
-    // 清理三角形背景
-    const trianglesContainer = document.getElementById('triangles');
-    if (trianglesContainer) {
-        trianglesContainer.innerHTML = '';
+     if (state.editForm.avatarPreviewUrl && state.editForm.avatarPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(state.editForm.avatarPreviewUrl);
     }
 });
+
+// Watch teamCode changes to trigger team check (Existing)
+watch(() => state.teamCode, (newCode) => {
+    if (newCode && newCode.length === 4 && !isNaN(parseInt(newCode))) {
+        checkTeam();
+    } else {
+         state.teamExists = false;
+         state.teamName = '';
+         state.teamMembers = [];
+         state.errorMessage = null;
+    }
+});
+
+// Watch userMember state to update currentStep
+watch(() => state.userMember, (newUserMember) => {
+    if (newUserMember) {
+        state.currentStep = 2; // Show user info/edit section
+        // Populate teamCode for team check display
+        state.teamCode = newUserMember.team_code;
+        checkTeam(); // Fetch team details for display
+    } else {
+        // User is not registered or registration was deleted
+        state.currentStep = 1; // Show team check/registration prompt
+        // Keep teamCode if user was just deleted, so they can re-register in the same team easily
+        // Or clear it: state.teamCode = '';
+    }
+});
+
+// Watch isAuthenticated state to potentially redirect or show login prompt
+watch(() => state.isAuthenticated, (newVal) => {
+    if (!newVal) {
+        // User logged out or auth failed, clear user specific state
+        state.kindeUser = null;
+        state.userMember = null;
+        // Optionally redirect to home or show a login required message
+        // router.push('/'); // Example redirect
+    }
+});
+
 
 </script>
 
 <template>
-    <!-- Root container -->
-    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center px-4 py-8 sm:px-6 lg:px-8 relative">
-         <!-- 动态三角形背景 -->
-         <div id="triangles" class="absolute inset-0 z-0 overflow-hidden"></div>
-        <!-- Main Content Container -->
-        <div class="w-full max-w-md mx-auto relative z-10">
+    <div class="bg-gray-900 text-white min-h-screen flex flex-col items-center px-4 py-8 sm:px-6 lg:px-8 relative">
+        <!-- Background elements -->
+        <div id="triangles" class="absolute inset-0 z-0 overflow-hidden"></div>
 
-            <!-- Progress Bar (Visible in steps 2-4) -->
-            <!-- MODIFIED: v-if condition changed -->
-            <div class="mb-8" v-if="state.currentStep >= 2 && state.currentStep < 5">
-                <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                    <!-- MODIFIED: Highlight logic adjusted for new steps -->
-                    <span :class="{'text-white font-bold': state.currentStep >= 1}">组队码</span>
-                    <span :class="{'text-white font-bold': state.currentStep >= 2}">颜色</span>
-                    <span :class="{'text-white font-bold': state.currentStep >= 3}">职业</span>
-                    <span :class="{'text-white font-bold': state.currentStep >= 4}">个人信息</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" :style="{ width: progressWidth }"></div>
-                </div>
+        <!-- Main Content Container -->
+        <div class="w-full max-w-2xl mx-auto relative z-10">
+
+            <!-- Header -->
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold mb-2">NGU 3rd 报名</h1>
+                <p class="text-purple-300">组建你的队伍，加入挑战！</p>
+            </div>
+
+            <!-- Loading Overlay -->
+            <div class="loading-overlay z-40" v-show="state.isLoading || state.isCheckingAuth || state.isCheckingRegistration">
+                <div class="spinner"></div>
+                <p class="mt-4 text-white">
+                     {{ state.isCheckingAuth ? '检查登录状态...' : state.isCheckingRegistration ? '检查报名信息...' : state.errorMessage ? state.errorMessage : '处理中，请稍候...' }}
+                </p>
             </div>
 
              <!-- Error message display area -->
              <transition name="fade-in-up">
-                 <div v-if="state.errorMessage && (!state.showConfirmModal && !state.showCreateModal && !state.showEditModal  && !state.showLoadingOverlay)" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                 <div v-if="state.errorMessage && !state.isLoading && !state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
                      <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                      <span class="break-words flex-grow">{{ state.errorMessage }}</span>
                     <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.errorMessage = null" aria-label="关闭错误消息">
@@ -895,771 +751,372 @@ onUnmounted(() => {
                 </div>
              </transition>
 
-            <!-- ADDED: Step 0: Entry Page -->
-            <div id="step-entry" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 0">
-                <!-- Header -->
-                <div class="text-center mb-8">
-                     <div class="w-24 h-24 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
-                        <!-- You can use a relevant icon, e.g., trophy or calendar -->
-                        <img src="/logo.webp" class="w-24 h-24 text-white" alt="NGU3rd Logo">
-                    </div>
-                    <h1 class="text-3xl font-bold mb-2">{{ state.eventInfo.title }}</h1>
-                    <p class="text-purple-300">活动报名入口</p>
+             <!-- Success message display area -->
+             <transition name="fade-in-up">
+                 <div v-if="state.successMessage && !state.isLoading && !state.showEditModal" class="bg-green-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                     <img src="https://unpkg.com/lucide-static@latest/icons/circle-check.svg" class="w-5 h-5 mr-3 text-green-300 flex-shrink-0 mt-0.5" alt="Success">
+                     <span class="break-words flex-grow">{{ state.successMessage }}</span>
+                    <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.successMessage = null" aria-label="关闭成功消息">
+                        <svg xmlns="http://www.wende.dev/icons/x.svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
                 </div>
+             </transition>
 
-                <!-- Event Information -->
-                <div class="mb-8 space-y-4 text-sm">
-                    <div class="flex items-start">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/map-pin.svg" class="w-4 h-4 mr-3 text-purple-300 flex-shrink-0 mt-1" alt="Location">
-                        <span class="text-gray-200"><strong class="font-medium text-purple-300">地点:</strong> {{ state.eventInfo.location }}</span>
-                    </div>
-                    <div class="flex items-start">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/clock.svg" class="w-4 h-4 mr-3 text-purple-300 flex-shrink-0 mt-1" alt="Time">
-                        <span class="text-gray-200"><strong class="font-medium text-purple-300">时间:</strong> {{ state.eventInfo.time }}</span>
-                    </div>
-                    <div class="flex items-start">
-                         <img src="https://unpkg.com/lucide-static@latest/icons/info.svg" class="w-4 h-4 mr-3 text-purple-300 flex-shrink-0 mt-1" alt="Info">
-                        <p class="text-gray-300 leading-relaxed"><strong class="font-medium text-purple-300">简介:</strong> {{ state.eventInfo.description }}</p>
-                    </div>
-                    <!-- Optional: Rules Link -->
-                    <!--
-                    <div v-if="state.eventInfo.rulesLink" class="flex items-start">
-                         <img src="https://unpkg.com/lucide-static@latest/icons/book-open.svg" class="w-4 h-4 mr-3 text-purple-300 flex-shrink-0 mt-1" alt="Rules">
-                        <a :href="state.eventInfo.rulesLink" target="_blank" rel="noopener noreferrer" class="text-purple-400 hover:underline font-medium">查看详细规则</a>
-                    </div>
-                     -->
-                </div>
 
-                <!-- Enter Button -->
-                <!-- MODIFIED: Button goes to step 1 -->
-                <button @click="showStep(1)" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300">
-                    进入报名 / 组队
-                </button>
-            </div>
+            <!-- Step 1: Team Check / Login Prompt -->
+            <div v-if="state.currentStep === 1 && !state.isLoading" class="glass rounded-3xl p-8 fade-in">
+                <h2 class="text-2xl font-bold text-center mb-6">查找或创建队伍</h2>
 
-            <!-- MODIFIED: Step 1: Team Code Input (was Step 1) -->
-            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1">
-                <!-- Header -->
-                <div class="text-center mb-8">
-                     <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-12 h-12 text-white" alt="Team">
-                    </div>
-                    <h1 class="text-3xl font-bold mb-2">加入或创建队伍</h1>
-                    <p class="text-purple-300">输入四位数组队码</p>
-                </div>
-
-                <!-- Input Field -->
-                <div class="mb-8">
-                    <label for="teamCode" class="block text-sm font-medium text-purple-300 mb-2">组队码</label>
+                <div class="mb-6">
+                    <label for="team-code" class="block text-sm font-medium text-purple-300 mb-2">输入队伍码</label>
                     <input
                         type="text"
-                        inputmode="numeric"
-                        pattern="[0-9]*"
-                        id="teamCode"
+                        id="team-code"
                         v-model="state.teamCode"
+                        placeholder="输入4位队伍码"
+                        class="form-input input-code w-full rounded-lg py-3 px-4 text-white focus:outline-none"
                         maxlength="4"
-                        placeholder="1234"
-                        class="input-code w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-4 px-6 text-2xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500 text-center tracking-[0.5em]"
-                        @input="(event) => state.teamCode = event.target.value.replace(/[^0-9]/g, '')"
-                        @keydown.enter="handleContinue"
+                        inputmode="numeric"
+                        @input="state.teamCode = state.teamCode.replace(/[^0-9]/g, '')"
+                        @keydown.enter="checkTeam"
                     >
-                    <p class="mt-2 text-xs text-gray-400">不存在的组队码将自动创建新队伍</p>
                 </div>
 
-                <!-- Continue Button -->
-                <button @click="handleContinue" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                    继续
-                </button>
-                 <!-- MODIFIED: Back button goes to step 0 -->
-                 <button type="button" @click="showStep(0)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
-                    返回活动信息
-                </button>
-            </div>
+                <!-- Team Info / Create Team / Login/Register -->
+                <div v-if="state.teamCode.length === 4">
+                    <div v-if="state.isLoading" class="text-center text-gray-400">加载队伍信息...</div>
+                    <div v-else-if="state.teamExists" class="border border-gray-700 rounded-lg p-4 mb-6">
+                        <h3 class="text-xl font-bold mb-2">{{ state.teamName }} ({{ state.teamCode }})</h3>
+                        <p class="text-gray-300 text-sm mb-4">队伍成员 ({{ state.teamMembers.length }}/3):</p>
+                        <ul class="space-y-2">
+                            <li v-for="member in state.teamMembers" :key="member.maimai_id" class="flex items-center text-gray-300 text-sm">
+                                <span :class="`color-indicator color-${member.color}-bg mr-2`"></span>
+                                <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-2 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                {{ member.nickname }} ({{ member.maimai_id }})
+                            </li>
+                            <li v-if="state.teamMembers.length < 3" class="text-gray-500 text-sm italic">虚位以待...</li>
+                        </ul>
 
-            <!-- MODIFIED: Step 2: Color Selection (was Step 2) -->
-            <div id="step-color-selection" class="glass rounded-3xl p-4 sm:p-6 md:p-8 fade-in" v-if="state.currentStep === 2">
-                <!-- Header -->
-                <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold mb-2">选择你的元素</h1>
-                    <p class="text-purple-300">每个队伍中的元素必须唯一</p>
-                </div>
-
-                <!-- Team Info Box -->
-                <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                     <div class="flex items-center">
-                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
-                        </div>
-                        <div>
-                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                             <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Color Options Grid -->
-                <div class="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
-                    <div role="button" tabindex="0" class="color-option"
-                         :class="{ selected: state.selectedColor === 'red', 'disabled-option': isColorDisabled('red') }"
-                         @click="selectColor('red')" @keydown.enter="selectColor('red')" @keydown.space="selectColor('red')">
-                        <div class="color-red-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center color-red-shadow">
-                             <img :src="getIconPath('color', 'red')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getColorText('red') + '图标'">
-                        </div>
-                        <p class="text-center font-medium text-sm">{{ getColorText('red') }}</p>
-                    </div>
-                     <div role="button" tabindex="0" class="color-option"
-                         :class="{ selected: state.selectedColor === 'green', 'disabled-option': isColorDisabled('green') }"
-                         @click="selectColor('green')" @keydown.enter="selectColor('green')" @keydown.space="selectColor('green')">
-                        <div class="color-green-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center color-green-shadow">
-                             <img :src="getIconPath('color', 'green')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getColorText('green') + '图标'">
-                        </div>
-                        <p class="text-center font-medium text-sm">{{ getColorText('green') }}</p>
-                    </div>
-                     <div role="button" tabindex="0" class="color-option"
-                         :class="{ selected: state.selectedColor === 'blue', 'disabled-option': isColorDisabled('blue') }"
-                         @click="selectColor('blue')" @keydown.enter="selectColor('blue')" @keydown.space="selectColor('blue')">
-                        <div class="color-blue-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center color-blue-shadow">
-                             <img :src="getIconPath('color', 'blue')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getColorText('blue') + '图标'">
-                        </div>
-                        <p class="text-center font-medium text-sm">{{ getColorText('blue') }}</p>
-                    </div>
-                </div>
-
-                <!-- Current Members Box (Compact display) -->
-                <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                    <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
-                    <div class="space-y-3 max-h-32 overflow-y-auto">
-                        <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
-                        <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center justify-between">
-                            <div class="flex items-center flex-grow mr-2">
-                                <img
-                                    v-if="member.avatar_url"
-                                    :src="member.avatar_url"
-                                    alt="头像"
-                                    class="rounded-full w-8 h-8 object-cover mr-3 flex-shrink-0 border border-gray-600"
-                                    :class="[`border-${member.color}-500`]"
-                                >
-                                <div
-                                    v-else
-                                    :class="`color-${member.color}-bg`"
-                                    class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
-                                >
-                                    <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
-                                </div>
-
-                                <div>
-                                    <p class="font-medium text-sm">{{ member.nickname }}</p>
-                                    <p class="text-xs text-gray-300 flex items-center flex-wrap">
-                                        <span class="flex items-center mr-2">
-                                            <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
-                                        </span>
-                                        <span class="flex items-center">
-                                            <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                            {{ getJobText(member.job) }}
-                                        </span>
-                                    </p>
-                                </div>
+                        <div class="mt-6 text-center">
+                            <p class="text-gray-300 mb-4">加入此队伍需要登录/注册：</p>
+                            <div v-if="state.isCheckingAuth" class="text-gray-400">检查登录状态...</div>
+                            <div v-else-if="!state.isAuthenticated">
+                                 <button @click="login" class="btn-glow bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-6 rounded-lg transition duration-300 mr-4">
+                                     登录
+                                 </button>
+                                 <button @click="register" class="bg-gray-700 hover:bg-gray-600 text-gray-300 font-bold py-3 px-6 rounded-lg transition duration-300">
+                                     注册
+                                 </button>
                             </div>
-
-                            <button
-                                v-if="member.maimai_id"
-                                type="button"
-                                @click="openEditModal(member.maimai_id)"
-                                class="flex-shrink-0 ml-auto px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded-md text-xs font-medium text-white transition-colors"
-                                aria-label="修改此报名信息"
-                            >
-                                修改
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <!-- Navigation Buttons -->
-                 <!-- MODIFIED: Button goes to step 3 -->
-                 <button @click="showStep(3)" :disabled="!state.selectedColor" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                    下一步
-                </button>
-                <!-- MODIFIED: Back button goes to step 1 -->
-                <button type="button" @click="showStep(1)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
-                    返回
-                </button>
-            </div>
-
-            <!-- MODIFIED: Step 3: Job Selection (was Step 3) -->
-            <div id="step-job-selection" class="glass rounded-3xl p-4 sm:p-6 md:p-8 fade-in" v-if="state.currentStep === 3">
-                 <!-- Header -->
-                <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold mb-2">选择你的职业</h1>
-                    <p class="text-purple-300">每个队伍中的职业也必须唯一</p>
-                </div>
-
-                <!-- Team Info Box -->
-                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                     <div class="flex items-center justify-between">
-                         <div class="flex items-center">
-                             <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
-                                <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
-                            </div>
-                            <div>
-                                <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                                 <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
-                            </div>
-                         </div>
-                         <!-- Selected Color Display -->
-                         <div class="flex items-center glass rounded-full px-3 py-1 border border-gray-600 flex-shrink-0">
-                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex-shrink-0">
-                                 <img :src="getIconPath('color', state.selectedColor)" class="w-5 h-5 text-white" :alt="getColorText(state.selectedColor) + '图标'">
-                             </div>
-                             <p class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Job Options Grid -->
-                 <div class="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 mb-8">
-                    <div role="button" tabindex="0" class="job-option"
-                         :class="{ selected: state.selectedJob === 'attacker', 'disabled-option': isJobDisabled('attacker') }"
-                         @click="selectJob('job-attacker');" @keydown.enter="selectJob('job-attacker')" @keydown.space="selectJob('job-attacker')">
-                         <div class="job-attacker-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                             <img :src="getIconPath('job', 'attacker')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('attacker') + '图标'">
-                        </div>
-                        <p class="text-center font-medium text-sm">{{ getJobText('attacker') }}</p>
-                    </div>
-                    <div role="button" tabindex="0" class="job-option"
-                         :class="{ selected: state.selectedJob === 'defender', 'disabled-option': isJobDisabled('defender') }"
-                         @click="selectJob('job-defender')" @keydown.enter="selectJob('job-defender')" @keydown.space="selectJob('job-defender')">
-                         <div class="job-defender-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                             <img :src="getIconPath('job', 'defender')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('defender') + '图标'">
-                        </div>
-                        <p class="text-center font-medium text-sm">{{ getJobText('defender') }}</p>
-                    </div>
-                    <div role="button" tabindex="0" class="job-option"
-                         :class="{ selected: state.selectedJob === 'supporter', 'disabled-option': isJobDisabled('supporter') }"
-                         @click="selectJob('job-supporter')" @keydown.enter="selectJob('job-supporter')" @keydown.space="selectJob('job-supporter')">
-                        <div class="job-supporter-bg rounded-full w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-2 flex items-center justify-center job-shadow">
-                            <img :src="getIconPath('job', 'supporter')" class="w-10 h-10 sm:w-12 sm:h-12 text-white" :alt="getJobText('supporter') + '图标'">
-                        </div>
-                        <p class="text-center font-medium text-sm">{{ getJobText('supporter') }}</p>
-                    </div>
-                </div>
-
-                <!-- Current Members Box (Compact display) -->
-                <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                     <h3 class="text-sm font-medium mb-3 text-purple-300">当前队伍成员</h3>
-                    <div class="space-y-3 max-h-32 overflow-y-auto">
-                         <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无其他成员</div>
-                         <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || member.nickname" class="flex items-center">
-                              <img
-                                 v-if="member.avatar_url"
-                                 :src="member.avatar_url"
-                                 alt="头像"
-                                 class="rounded-full w-8 h-8 object-cover mr-3 flex-shrink-0 border border-gray-600"
-                                 :class="[`border-${member.color}-500`]"
-                             >
-                             <div
-                                v-else
-                                :class="`color-${member.color}-bg`"
-                                class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
-                              >
-                                <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
-                              </div>
-
-                            <div>
-                                <p class="font-medium text-sm">{{ member.nickname }}</p>
-                                <p class="text-xs text-gray-300 flex items-center flex-wrap">
-                                     <span class="flex items-center mr-2">
-                                         <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
-                                     </span>
-                                    <span class="flex items-center">
-                                         <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                        {{ getJobText(member.job) }}
-                                    </span>
-                                </p>
+                            <div v-else>
+                                 <!-- User is authenticated but not registered -->
+                                 <p class="text-green-400 mb-4">你已登录为 {{ state.kindeUser?.name || state.kindeUser?.email }}。</p>
+                                 <button @click="state.currentStep = 2" class="btn-glow bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300">
+                                     填写报名信息
+                                 </button>
+                                 <button @click="logout" class="ml-4 text-gray-400 hover:text-white text-sm">
+                                     登出
+                                 </button>
                             </div>
                         </div>
+
                     </div>
-                </div>
-
-                <!-- Navigation Buttons -->
-                <!-- MODIFIED: Button goes to step 4 -->
-                <button @click="showStep(4)" :disabled="!state.selectedJob" :class="{'opacity-50 cursor-not-allowed': !state.selectedJob}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
-                    下一步
-                </button>
-                <!-- MODIFIED: Back button goes to step 2 -->
-                <button type="button" @click="showStep(2)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
-                    返回
-                </button>
-            </div>
-
-            <!-- MODIFIED: Step 4: Personal Info (was Step 4) -->
-            <div id="step-personal-info" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 4">
-                 <!-- Header -->
-                 <div class="text-center mb-8">
-                    <h1 class="text-3xl font-bold mb-2">填写个人信息</h1>
-                    <p class="text-purple-300">完成最后一步即可加入队伍</p>
-                </div>
-
-                <!-- Summary Box -->
-                <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                    <h3 class="text-sm font-medium mb-3 text-center text-purple-300">你的选择</h3>
-                    <div class="flex items-center justify-around">
-                         <!-- Team -->
-                        <div class="text-center flex flex-col items-center">
-                             <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mb-1 shadow-md flex-shrink-0">
-                                <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-4 h-4 text-white" alt="Team">
-                            </div>
-                            <p class="text-xs font-medium text-gray-200">{{ state.teamName || '队伍' }}</p>
-                             <p class="text-xs text-gray-400">{{ state.teamCode || '代码' }}</p>
+                    <div v-else class="text-center">
+                        <p class="text-gray-300 mb-4">队伍码 {{ state.teamCode }} 不存在。</p>
+                        <p class="text-gray-300 mb-4">你可以创建这个队伍：</p>
+                        <div class="mb-4">
+                            <label for="new-team-name" class="block text-sm font-medium text-purple-300 mb-2">新队伍名称</label>
+                            <input type="text" id="new-team-name" v-model="state.teamName" placeholder="输入队伍名称" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
                         </div>
-                         <!-- Color -->
-                         <div class="text-center flex flex-col items-center">
-                            <div :class="`color-${state.selectedColor}-bg`" class="rounded-full p-2 mb-1 shadow-md flex-shrink-0">
-                                 <img :src="getIconPath('color', state.selectedColor)" class="w-5 h-5 text-white" :alt="getColorText(state.selectedColor) + '图标'">
-                             </div>
-                             <p class="text-xs font-medium text-gray-200">{{ getColorText(state.selectedColor) || '颜色' }}</p>
-                        </div>
-                         <!-- Job -->
-                         <div class="text-center flex flex-col items-center">
-                            <div :class="`job-${state.selectedJob}-bg`" class="rounded-full p-2 mb-1 shadow-md job-summary-shadow flex-shrink-0">
-                                <img :src="getIconPath('job', state.selectedJob)" class="w-5 h-5 text-white" :alt="getJobText(state.selectedJob) + '图标'">
-                            </div>
-                             <p class="text-xs font-medium text-gray-200">{{ getJobText(state.selectedJob) || '职业' }}</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Form -->
-                 <form @submit.prevent="handleSubmitPersonalInfo">
-
-                    <!-- Avatar Upload Section -->
-                    <div class="mb-6 text-center">
-                        <label class="block text-sm font-medium text-purple-300 mb-3">上传头像 (可选, 最大 {{ MAX_AVATAR_SIZE_MB }}MB)</label>
-                        <div class="flex flex-col items-center space-y-3">
-                            <!-- Preview Image -->
-                            <img v-if="state.avatarPreviewUrl" :src="state.avatarPreviewUrl" alt="头像预览" class="w-24 h-24 rounded-full object-cover border-2 border-purple-500 shadow-md">
-                            <div v-else class="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600">
-                                <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-10 h-10 text-gray-400" alt="Default Avatar">
-                            </div>
-                             <!-- File Input Button using a label -->
-                            <label for="avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300">
-                                {{ state.avatarFile ? '更换头像' : '选择图片' }}
-                            </label>
-                            <!-- Hidden file input -->
-                            <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
-
-                            <button v-if="state.avatarFile" type="button" @click="handleAvatarChange({ target: { files: [] }})" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
-                        </div>
-                    </div>
-
-                    <!-- Other Fields -->
-                    <div class="mb-4">
-                        <label for="maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID <span class="text-red-500">*</span></label>
-                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：Om1tted" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="13">
-                         <p class="mt-1 text-xs text-gray-400">用于唯一识别你的报名信息，未来修改/删除时需提供</p>
-                    </div>
-
-                    <div class="mb-4">
-                        <label for="nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼 <span class="text-red-500">*</span></label>
-                        <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：om1t" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
-                    </div>
-
-                    <div class="mb-6">
-                        <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
-                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
-                         <p class="mt-1 text-xs text-gray-400">用于验证你的身份，请务必准确填写。</p>
-                    </div>
-
-                    <!-- Privacy Agreement -->
-                     <div class="mb-6">
-                        <label class="flex items-start cursor-pointer">
-                            <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-500 rounded bg-gray-700 outline-none">
-                             <span class="text-xs text-gray-300 select-none">我已阅读并同意<a href="#" @click.prevent class="text-purple-400 hover:underline font-medium">隐私政策</a>，允许收集和使用我的QQ号用于组队联系、身份验证目的。<span class="text-red-500">*</span></span>
-                        </label>
-                    </div>
-
-                    <!-- Action Buttons -->
-                    <button type="submit" :disabled="!state.privacyAgreed || state.showLoadingOverlay" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :class="{'opacity-50 cursor-not-allowed': !state.privacyAgreed || state.showLoadingOverlay}">
-                         {{ state.showLoadingOverlay ? '正在完成...' : '完成注册' }}
-                    </button>
-
-                    <!-- MODIFIED: Back button goes to step 3 -->
-                    <button type="button" @click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
-                        返回
-                    </button>
-                </form>
-            </div>
-
-            <!-- MODIFIED: Step 5: Completion Page (was Step 5) -->
-            <div id="step-completion" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 5">
-                 <!-- Progress Bar (Completed) -->
-                <div class="mb-8">
-                    <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                        <!-- MODIFIED: Highlight logic adjusted -->
-                        <span class="text-white font-bold">组队码</span>
-                        <span class="text-white font-bold">颜色</span>
-                        <span class="text-white font-bold">职业</span>
-                        <span class="text-white font-bold">完成</span>
-                    </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 100%;"></div></div>
-                </div>
-
-                <!-- Success Message -->
-                <div class="text-center mb-8">
-                     <div class="w-24 h-24 bg-gradient-to-br from-green-500 to-teal-500 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/check-circle.svg" class="w-12 h-12 text-white" alt="Success">
-                    </div>
-                    <h1 class="text-3xl font-bold mb-2">注册成功！</h1>
-                    <p class="text-teal-300">你已成功加入“<span class="font-bold">{{ state.teamName || '队伍' }}</span>”</p>
-                </div>
-
-                <!-- Team Info Box -->
-                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                     <div class="flex items-center">
-                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
-                         </div>
-                         <div>
-                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                             <p class="text-xs text-gray-400">
-                                 {{ state.teamCode || '----' }} · 成员: {{ state.completionAllMembers.length }}/3
-                                 <span v-if="state.completionAllMembers.length === 3" class="ml-1 text-green-400 font-bold">(队伍已满)</span>
-                             </p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Final Member List -->
-                <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                    <h3 class="text-sm font-medium mb-3 text-purple-300">队伍成员</h3>
-                    <div class="space-y-3 max-h-48 overflow-y-auto">
-                         <div v-if="state.completionAllMembers.length === 0" class="text-center text-gray-500 text-sm py-2">队伍信息加载中...</div>
-                         <div v-else v-for="member in state.completionAllMembers" :key="member.maimai_id || member.maimaiId || (member.nickname + member.qqNumber)" class="flex items-center relative">
-                             <img
-                                 v-if="member.avatar_url"
-                                 :src="member.avatar_url"
-                                 alt="头像"
-                                 class="rounded-full w-10 h-10 object-cover mr-3 flex-shrink-0 border-2 border-gray-600"
-                                 :class="[`border-${member.color}-500`]"
-                             >
-                              <div
-                                v-else
-                                :class="`color-${member.color}-bg`"
-                                class="rounded-full w-10 h-10 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border-2 border-gray-600"
-                              >
-                                <img :src="getIconPath('color', member.color)" class="w-5 h-5 text-white" :alt="getColorText(member.color) + '图标'">
-                              </div>
-
-                            <div class="flex-grow">
-                                 <p class="font-medium text-sm flex items-center">
-                                    {{ member.nickname }}
-                                    <span v-if="(member.maimai_id || member.maimaiId) === state.maimaiId" class="ml-2 text-xs bg-purple-600 px-1.5 py-0.5 rounded text-white font-bold">你</span>
-                                </p>
-                                <p class="text-xs text-gray-300 flex items-center flex-wrap">
-                                    <span class="flex items-center mr-2">
-                                        <span :class="`color-indicator color-${member.color}-bg`"></span>
-                                        {{ getColorText(member.color) }}
-                                    </span>
-                                    <span class="flex items-center">
-                                         <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
-                                        {{ getJobText(member.job) }}
-                                    </span>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                     <div class="mt-6 text-center">
-                         <button @click="openEditModal(state.maimaiId)" class="bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300 flex items-center mx-auto">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/file-pen.svg" class="w-4 h-4 mr-2" alt="Edit">
-                             修改我的报名信息
-                         </button>
-                     </div>
-                </div>
-
-                 <!-- Invite Section -->
-                 <div class="mb-8">
-                     <h3 class="text-center font-medium mb-4 text-purple-300">邀请好友加入 ({{ state.completionAllMembers.length }}/3)</h3>
-
-                     <!-- QR Code -->
-                     <div class="qr-code-container mb-4">
-                         <qrcode-vue
-                            v-if="shareLinkUrl"
-                            :value="shareLinkUrl"
-                            :size="140"
-                            level="H"
-                            render-as="svg"
-                            background="#ffffff"
-                            foreground="#111827"
-                            class="rounded-lg shadow-md"
-                          />
-                         <div v-else class="w-[140px] h-[140px] bg-gray-700 rounded-lg flex items-center justify-center text-gray-500 text-xs">
-                            生成中...
-                        </div>
-                     </div>
-
-                     <!-- Share Link Input & Copy Button -->
-                     <div class="flex mb-4 mt-4">
-                        <input
-                             type="text"
-                             id="shareLink"
-                             readonly
-                             :value="shareLinkUrl"
-                             class="share-link w-full rounded-l-lg py-3 px-4 text-white focus:outline-none text-sm"
-                             placeholder="分享链接生成中..."
-                             aria-label="分享链接"
-                         >
-                         <button
-                             id="copyBtn"
-                             type="button"
-                             @click="copyShareLink"
-                             class="bg-purple-700 hover:bg-purple-600 rounded-r-lg px-4 transition duration-200 flex items-center justify-center"
-                             :disabled="!shareLinkUrl"
-                             :class="{'opacity-50 cursor-not-allowed': !shareLinkUrl}"
-                             aria-label="复制链接"
-                         >
-                             <img src="https://unpkg.com/lucide-static@latest/icons/copy.svg" class="w-5 h-5 text-white" alt="Copy">
+                        <button @click="createTeam" :disabled="!state.teamName || state.isLoading" class="btn-glow bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300" :class="{'opacity-50 cursor-not-allowed': !state.teamName || state.isLoading}">
+                            创建队伍并报名
                         </button>
                     </div>
                 </div>
+            </div>
 
-                <!-- Back to Home Button -->
-                <!-- MODIFIED: Button goes to step 0 via goHome -->
-                <button type="button" @click="goHome" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
-                    返回首页
-                </button>
-            </div> <!-- End of Step 5 -->
+            <!-- Step 2: Registration Form / User Info -->
+            <div v-if="state.currentStep === 2 && !state.isLoading" class="glass rounded-3xl p-8 fade-in">
+                <!-- If user is registered -->
+                <div v-if="state.userMember">
+                     <h2 class="text-2xl font-bold text-center mb-6">你的报名信息</h2>
+                     <div class="border border-gray-700 rounded-lg p-6 mb-6 text-center">
+                         <img v-if="state.userMember.avatar_url" :src="state.userMember.avatar_url" alt="头像" class="w-24 h-24 rounded-full object-cover border-4 border-purple-500 shadow-lg mx-auto mb-4">
+                         <div v-else class="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center border-4 border-gray-600 mx-auto mb-4">
+                             <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-12 h-12 text-gray-400" alt="Default Avatar">
+                         </div>
+                         <h3 class="text-xl font-bold mb-2">{{ state.userMember.nickname }}</h3>
+                         <p class="text-gray-300 mb-4">舞萌ID: <span class="font-mono">{{ state.userMember.maimai_id }}</span></p>
+                         <p class="text-gray-300 mb-4">QQ号: {{ state.userMember.qq_number }}</p>
+                         <div class="flex justify-center items-center space-x-6 mb-4">
+                             <div class="flex items-center">
+                                 <span :class="`color-indicator color-${state.userMember.color}-bg mr-2 w-5 h-5`"></span>
+                                 <span class="text-lg">{{ getColorText(state.userMember.color) }}</span>
+                             </div>
+                             <div class="flex items-center">
+                                 <img :src="getIconPath('job', state.userMember.job)" class="w-5 h-5 inline-block mr-2 flex-shrink-0" :alt="getJobText(state.userMember.job) + '图标'">
+                                 <span class="text-lg">{{ getJobText(state.userMember.job) }}</span>
+                             </div>
+                         </div>
+                         <p class="text-gray-400 text-sm">队伍: {{ state.teamName }} ({{ state.userMember.team_code }})</p>
+                         <p class="text-gray-500 text-xs mt-2">加入时间: {{ formatTimestamp(state.userMember.joined_at) }}</p>
+                         <p v-if="state.userMember.updated_at" class="text-gray-500 text-xs">更新时间: {{ formatTimestamp(state.userMember.updated_at) }}</p>
 
-             </div> <!-- End of relative z-10 block -->
+                         <div class="mt-6 flex justify-center space-x-4">
+                             <button @click="openEditModal" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                                 修改信息
+                             </button>
+                             <button @click="deleteMember" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                                 删除报名
+                             </button>
+                         </div>
+                     </div>
+
+                     <!-- Display Team Members (reused from step 1) -->
+                     <div v-if="state.teamExists" class="border border-gray-700 rounded-lg p-4">
+                         <h3 class="text-xl font-bold mb-2">{{ state.teamName }} ({{ state.teamCode }})</h3>
+                         <p class="text-gray-300 text-sm mb-4">队伍成员 ({{ state.teamMembers.length }}/3):</p>
+                         <ul class="space-y-2">
+                             <li v-for="member in state.teamMembers" :key="member.maimai_id" class="flex items-center text-gray-300 text-sm">
+                                 <span :class="`color-indicator color-${member.color}-bg mr-2`"></span>
+                                 <img :src="getIconPath('job', member.job)" class="w-4 h-4 inline-block mr-2 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                 {{ member.nickname }} ({{ member.maimai_id }})
+                             </li>
+                             <li v-if="state.teamMembers.length < 3" class="text-gray-500 text-sm italic">虚位以待...</li>
+                         </ul>
+                     </div>
+
+                     <div class="mt-6 text-center">
+                         <button @click="logout" class="text-gray-400 hover:text-white text-sm">
+                             登出
+                         </button>
+                     </div>
+
+                </div>
+
+                <!-- If user is authenticated but NOT registered -->
+                <div v-else-if="state.isAuthenticated && state.kindeUser">
+                     <h2 class="text-2xl font-bold text-center mb-6">填写报名信息</h2>
+                     <p class="text-gray-300 text-center mb-6">你已登录为 {{ state.kindeUser?.name || state.kindeUser?.email }}。</p>
+
+                     <!-- Registration Form (reused from original IndexPage) -->
+                     <form @submit.prevent="submitRegistration">
+                         <!-- Team Code (pre-filled from step 1) -->
+                         <div class="mb-4">
+                             <label for="form-team-code" class="block text-sm font-medium text-purple-300 mb-2">队伍码</label>
+                             <input type="text" id="form-team-code" v-model="state.teamCode" disabled class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none opacity-70 cursor-not-allowed">
+                         </div>
+
+                         <!-- Color Selection -->
+                         <div class="mb-4">
+                             <label class="block text-sm font-medium text-purple-300 mb-2">选择颜色 <span class="text-red-500">*</span></label>
+                             <div class="flex space-x-4">
+                                 <label class="flex items-center cursor-pointer">
+                                     <input type="radio" name="color" value="red" v-model="state.form.color" required class="form-radio text-red-600 focus:ring-red-500 border-gray-500 rounded-full bg-gray-700 outline-none">
+                                     <span class="ml-2 text-gray-300">火</span>
+                                 </label>
+                                 <label class="flex items-center cursor-pointer">
+                                     <input type="radio" name="color" value="green" v-model="state.form.color" required class="form-radio text-green-600 focus:ring-green-500 border-gray-500 rounded-full bg-gray-700 outline-none">
+                                     <span class="ml-2 text-gray-300">木</span>
+                                 </label>
+                                 <label class="flex items-center cursor-pointer">
+                                     <input type="radio" name="color" value="blue" v-model="state.form.color" required class="form-radio text-blue-600 focus:ring-blue-500 border-gray-500 rounded-full bg-gray-700 outline-none">
+                                     <span class="ml-2 text-gray-300">水</span>
+                                 </label>
+                             </div>
+                         </div>
+
+                         <!-- Job Selection -->
+                         <div class="mb-4">
+                             <label class="block text-sm font-medium text-purple-300 mb-2">选择职业 <span class="text-red-500">*</span></label>
+                             <div class="flex space-x-4">
+                                 <label class="flex items-center cursor-pointer">
+                                     <input type="radio" name="job" value="attacker" v-model="state.form.job" required class="form-radio text-orange-600 focus:ring-orange-500 border-gray-500 rounded-full bg-gray-700 outline-none">
+                                     <span class="ml-2 text-gray-300">绝剑士</span>
+                                 </label>
+                                 <label class="flex items-center cursor-pointer">
+                                     <input type="radio" name="job" value="defender" v-model="state.form.job" required class="form-radio text-indigo-600 focus:ring-indigo-500 border-gray-500 rounded-full bg-gray-700 outline-none">
+                                     <span class="ml-2 text-gray-300">矩盾手</span>
+                                 </label>
+                                 <label class="flex items-center cursor-pointer">
+                                     <input type="radio" name="job" value="supporter" v-model="state.form.job" required class="form-radio text-pink-600 focus:ring-pink-500 border-gray-500 rounded-full bg-gray-700 outline-none">
+                                     <span class="ml-2 text-gray-300">炼星师</span>
+                                 </label>
+                             </div>
+                         </div>
+
+                         <!-- Maimai ID -->
+                         <div class="mb-4">
+                             <label for="form-maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID <span class="text-red-500">*</span></label>
+                             <input type="text" id="form-maimai-id" v-model="state.form.maimaiId" required placeholder="例如：Om1tted" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="13">
+                         </div>
+
+                         <!-- Nickname -->
+                         <div class="mb-4">
+                             <label for="form-nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼 <span class="text-red-500">*</span></label>
+                             <input type="text" id="form-nickname" v-model="state.form.nickname" required placeholder="例如：om1t" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
+                         </div>
+
+                         <!-- QQ Number -->
+                         <div class="mb-4">
+                             <label for="form-qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
+                             <input type="text" inputmode="numeric" id="form-qq-number" v-model="state.form.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
+                         </div>
+
+                         <!-- Avatar Upload -->
+                         <div class="mb-6 text-center">
+                             <label class="block text-sm font-medium text-purple-300 mb-3">上传头像 (可选, 最大 {{ MAX_AVATAR_SIZE_MB }}MB)</label>
+                             <div class="flex flex-col items-center space-y-3">
+                                 <!-- Preview Image -->
+                                 <img v-if="state.form.avatarPreviewUrl" :src="state.form.avatarPreviewUrl" alt="头像预览" class="w-20 h-20 rounded-full object-cover border-2 border-purple-500 shadow-md">
+                                 <div v-else class="w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600">
+                                     <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-8 h-8 text-gray-400" alt="Default Avatar">
+                                 </div>
+                                  <!-- File Input Button -->
+                                 <label for="avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300">
+                                     {{ state.form.avatarFile ? '更换图片' : '选择图片' }}
+                                 </label>
+                                 <!-- Hidden file input -->
+                                 <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
+                                 <p class="text-xs text-gray-400">支持 JPG, PNG, GIF, 最大 2MB</p>
+                                 <button v-if="state.form.avatarFile" type="button" @click="removeAvatar" class="text-red-400 hover:text-red-600 text-xs mt-1">移除图片</button>
+                             </div>
+                         </div>
+
+                         <!-- Privacy Agreement -->
+                         <div class="mb-6">
+                             <label class="flex items-center cursor-pointer">
+                                 <input type="checkbox" v-model="state.form.privacyAgreed" required class="form-checkbox text-purple-600 focus:ring-purple-500 border-gray-500 rounded bg-gray-700 outline-none">
+                                 <span class="ml-2 text-sm text-gray-300">我已阅读并同意 <a href="#" class="text-purple-400 hover:underline">隐私条款</a> <span class="text-red-500">*</span></span>
+                             </label>
+                         </div>
+
+                         <!-- Submit Button -->
+                         <div class="text-center">
+                             <button type="submit" :disabled="state.isLoading || !state.form.privacyAgreed" class="btn-glow bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-8 rounded-lg transition duration-300" :class="{'opacity-50 cursor-not-allowed': state.isLoading || !state.form.privacyAgreed}">
+                                 {{ state.isLoading ? '提交中...' : '确认报名' }}
+                             </button>
+                         </div>
+                     </form>
+
+                     <div class="mt-6 text-center">
+                         <button @click="logout" class="text-gray-400 hover:text-white text-sm">
+                             登出
+                         </button>
+                     </div>
+
+                </div>
+                 <!-- If not authenticated (should be handled by step 1 or router guard, but fallback) -->
+                 <div v-else class="text-center text-gray-400">
+                     请先登录或注册。
+                     <button @click="login" class="btn-glow bg-purple-700 hover:bg-purple-600 text-white font-bold py-3 px-6 rounded-lg transition duration-300 mt-4">
+                         登录 / 注册
+                     </button>
+                 </div>
+
+            </div>
 
             <!-- Footer Info -->
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10">
-                 <p>{{ new Date().getFullYear() }} © NGU Team © MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p>
+                 <p>{{ new Date().getFullYear() }} © NGU Team © MPAM-Lab</p>
             </div>
 
         </div> <!-- End of Container -->
 
-        <!-- Modals -->
-        <!-- Confirm Join Modal -->
-        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showConfirmModal">
-            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8">
-                <h3 class="text-xl font-bold mb-4">确认加入队伍</h3>
-                <p class="mb-6 text-sm text-gray-200">你即将加入 "<span class="text-purple-400 font-bold">{{ state.teamName }}</span>" 队伍。当前成员 <span class="font-bold">{{ state.currentTeamMembers.length }}</span>/3。</p>
-                 <div v-if="state.currentTeamMembers.length > 0" class="mb-4 space-y-2 max-h-32 overflow-y-auto text-sm border-t border-b border-gray-700 py-2 px-1">
-                     <span class="font-semibold text-purple-300 block mb-1">现有成员:</span>
-                      <div v-for="member in state.currentTeamMembers" :key="member.maimai_id || (member.nickname + member.qqNumber)" class="flex items-center justify-between">
-                         <div class="flex items-center flex-grow mr-2">
-                             <img
-                                 v-if="member.avatar_url"
-                                 :src="member.avatar_url"
-                                 alt="头像"
-                                 class="rounded-full w-6 h-6 object-cover mr-2 flex-shrink-0 border border-gray-600"
-                                 :class="[`border-${member.color}-500`]"
-                             >
-                              <div
-                                v-else
-                                :class="`color-${member.color}-bg`"
-                                class="rounded-full w-6 h-6 flex items-center justify-center mr-2 flex-shrink-0 shadow-sm border border-gray-600"
-                              >
-                                <img :src="getIconPath('color', member.color)" class="w-3 h-3 text-white" :alt="getColorText(member.color) + '图标'">
-                              </div>
-                             <span class="text-gray-300 flex-grow">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
-                         </div>
-
-                         <button
-                            v-if="member.maimai_id"
-                             type="button"
-                             @click="openEditModal(member.maimai_id)"
-                             class="flex-shrink-0 ml-auto px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded-md text-xs font-medium text-white transition-colors"
-                             aria-label="修改此报名信息"
-                         >
-                            修改
-                         </button>
-                     </div>
-                 </div>
-                 <p v-else class="mb-4 text-sm text-gray-400 italic">队伍目前还没有成员。</p>
-
-                <div class="flex space-x-4">
-                    <button type="button" @click="state.showConfirmModal = false; /* Keep loading state managed by handleContinue finally */" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
-                        取消
-                    </button>
-                    <button type="button" @click="confirmJoinTeam" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium">
-                        确认加入
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Create Team Modal -->
-       <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showCreateModal">
-           <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8">
-                <h3 class="text-xl font-bold mb-4">创建新队伍</h3>
-                <p class="mb-4 text-sm text-gray-200">组队码 <span class="font-bold text-purple-400">{{ state.teamCode }}</span> 未被使用。请为你的队伍命名：</p>
-                <div class="mb-6">
-                    <label for="newTeamName" class="block text-sm font-medium text-purple-300 mb-2">队伍名称 <span class="text-red-500">*</span></label>
-                    <input type="text" id="newTeamName" v-model="state.newTeamName" placeholder="例如：对不队" class="w-full form-input rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="20" @keydown.enter="createNewTeam">
-                     <p v-if="state.errorMessage && state.showCreateModal" class="mt-2 text-xs text-red-400">{{ state.errorMessage }}</p>
-                </div>
-                <div class="flex space-x-4">
-                    <button type="button" @click="state.showCreateModal = false; state.errorMessage = null;" class="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium">
-                        取消
-                    </button>
-                    <button type="button" @click="createNewTeam" :disabled="!state.newTeamName?.trim()" class="flex-1 py-2 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium" :class="{'opacity-50 cursor-not-allowed': !state.newTeamName?.trim()}">
-                        确认创建
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Edit/Delete Member Modal -->
+        <!-- Edit Member Modal (for logged-in user) -->
         <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showEditModal">
             <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8">
-                <h3 class="text-xl font-bold mb-4 text-center">修改我的信息</h3>
-                 <p class="mb-6 text-sm text-gray-300 text-center">请验证你的身份后修改或删除信息。</p>
+                <h3 class="text-xl font-bold mb-4 text-center">修改我的报名信息</h3>
 
-                 <!-- Authentication Fields -->
-                 <div class="mb-6">
-                     <h4 class="text-md font-semibold mb-3 text-purple-300">身份验证</h4>
-                    <div class="mb-4">
-                        <label for="edit-auth-maimai-id" class="block text-sm font-medium text-purple-300 mb-2">你的舞萌ID <span class="text-red-500">*</span></label>
-                        <input
-                            type="text"
-                            id="edit-auth-maimai-id"
-                            v-model="state.editAuthMaimaiId"
-                            required
-                             placeholder="注册时使用的舞萌ID"
-                            class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none"
-                            maxlength="13"
-                        >
+                 <!-- Modal Error Message -->
+                 <transition name="fade-in-up">
+                     <div v-if="state.editModalErrorMessage" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                         <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
+                         <span class="break-words flex-grow">{{ state.editModalErrorMessage }}</span>
+                        <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.editModalErrorMessage = null" aria-label="关闭错误消息">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </button>
                     </div>
-                    <div class="mb-4">
-                        <label for="edit-auth-qq-number" class="block text-sm font-medium text-purple-300 mb-2">你的当前QQ号 <span class="text-red-500">*</span></label>
-                        <input
-                            type="text"
-                            inputmode="numeric"
-                            id="edit-auth-qq-number"
-                            v-model="state.editAuthQqNumber"
-                            required
-                            placeholder="注册时使用的QQ号"
-                            class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none"
-                            pattern="[1-9][0-9]{4,14}"
-                            maxlength="15"
-                        >
-                         <p class="mt-1 text-xs text-gray-400">用于验证你是信息的所有者。</p>
+                 </transition>
+
+                <form @submit.prevent="saveMemberEdit">
+                    <!-- Display static fields -->
+                    <div class="mb-4 text-gray-300 text-sm">
+                        <p>队伍码: <span class="font-bold">{{ state.userMember?.team_code }}</span></p>
+                        <p>舞萌ID: <span class="font-mono font-bold">{{ state.userMember?.maimai_id }}</span></p>
                     </div>
-                 </div>
-                 <hr class="my-6 border-gray-700">
 
-                 <!-- Editable Fields -->
-                 <div class="mb-6">
-                     <h4 class="text-md font-semibold mb-3 text-purple-300">修改信息 (留空不修改)</h4>
+                    <div class="mb-4">
+                        <label for="edit-nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼 <span class="text-red-500">*</span></label>
+                        <input type="text" id="edit-nickname" v-model="state.editForm.nickname" required placeholder="例如：om1t" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
+                    </div>
 
-                     <!-- New Avatar Upload Section (within modal) -->
+                    <div class="mb-4">
+                        <label for="edit-qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
+                        <input type="text" inputmode="numeric" id="edit-qq-number" v-model="state.editForm.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="edit-color" class="block text-sm font-medium text-purple-300 mb-2">颜色 <span class="text-red-500">*</span></label>
+                        <select id="edit-color" v-model="state.editForm.color" required class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
+                             <option value="" disabled>-- 选择颜色 --</option>
+                            <option value="red" :disabled="!isColorAvailableInUserTeam('red')" :class="{'opacity-50': !isColorAvailableInUserTeam('red')}">{{ getColorText('red') }}</option>
+                            <option value="green" :disabled="!isColorAvailableInUserTeam('green')" :class="{'opacity-50': !isColorAvailableInUserTeam('green')}">{{ getColorText('green') }}</option>
+                            <option value="blue" :disabled="!isColorAvailableInUserTeam('blue')" :class="{'opacity-50': !isColorAvailableInUserTeam('blue')}">{{ getColorText('blue') }}</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-6">
+                        <label for="edit-job" class="block text-sm font-medium text-purple-300 mb-2">职业 <span class="text-red-500">*</span></label>
+                        <select id="edit-job" v-model="state.editForm.job" required class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
+                             <option value="" disabled>-- 选择职业 --</option>
+                             <option value="attacker" :disabled="!isJobAvailableInUserTeam('attacker')" :class="{'opacity-50': !isJobAvailableInUserTeam('attacker')}">{{ getJobText('attacker') }}</option>
+                            <option value="defender" :disabled="!isJobAvailableInUserTeam('defender')" :class="{'opacity-50': !isJobAvailableInUserTeam('defender')}">{{ getJobText('defender') }}</option>
+                            <option value="supporter" :disabled="!isJobAvailableInUserTeam('supporter')" :class="{'opacity-50': !isJobAvailableInUserTeam('supporter')}">{{ getJobText('supporter') }}</option>
+                        </select>
+                    </div>
+
+                     <!-- Avatar Upload Section in Modal -->
                      <div class="mb-6 text-center">
-                         <label class="block text-sm font-medium text-purple-300 mb-3">上传新头像 (可选, 最大 {{ MAX_AVATAR_SIZE_MB }}MB)</label>
+                         <label class="block text-sm font-medium text-purple-300 mb-3">上传头像 (可选, 最大 {{ MAX_AVATAR_SIZE_MB }}MB)</label>
                          <div class="flex flex-col items-center space-y-3">
                              <!-- Preview Image -->
-                             <img v-if="state.editNewAvatarPreviewUrl" :src="state.editNewAvatarPreviewUrl" alt="新头像预览" class="w-20 h-20 rounded-full object-cover border-2 border-purple-500 shadow-md">
+                             <img v-if="state.editForm.avatarPreviewUrl" :src="state.editForm.avatarPreviewUrl" alt="头像预览" class="w-20 h-20 rounded-full object-cover border-2 border-purple-500 shadow-md">
                              <div v-else class="w-20 h-20 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600">
                                  <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-8 h-8 text-gray-400" alt="Default Avatar">
                              </div>
                               <!-- File Input Button -->
-                             <label for="edit-avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300">
-                                 {{ state.editNewAvatarFile ? '更换头像' : '选择图片' }}
+                             <label for="edit-modal-avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300">
+                                 {{ state.editForm.avatarFile ? '更换图片' : '选择图片' }}
                              </label>
                              <!-- Hidden file input -->
-                             <input type="file" id="edit-avatar-upload" @change="handleEditAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
+                             <input type="file" id="edit-modal-avatar-upload" @change="handleEditModalAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
                              <p class="text-xs text-gray-400">支持 JPG, PNG, GIF, 最大 2MB</p>
 
                              <!-- Option to clear existing avatar -->
                              <label class="flex items-center cursor-pointer text-xs text-gray-300 hover:text-white transition">
-                                 <input type="checkbox" v-model="state.editClearAvatarFlag" class="mr-1 h-3 w-3 text-red-600 focus:ring-red-500 border-gray-500 rounded bg-gray-700 outline-none">
-                                 移除当前头像 (如果已上传)
+                                 <input type="checkbox" v-model="state.editForm.clearAvatarFlag" class="mr-1 h-3 w-3 text-red-600 focus:ring-red-500 border-gray-500 rounded bg-gray-700 outline-none">
+                                 移除当前头像
                              </label>
                          </div>
-                     </div> <!-- End New Avatar Section -->
+                     </div> <!-- End Avatar Section -->
 
-                    <div class="mb-4">
-                        <label for="edit-nickname" class="block text-sm font-medium text-purple-300 mb-2">新称呼</label>
-                        <input type="text" id="edit-nickname" v-model="state.editNewNickname" placeholder="留空不修改" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
+
+                    <div class="flex space-x-4 justify-center">
+                        <button type="button" @click="closeEditModal" class="flex-1 py-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium max-w-[100px]">
+                            取消
+                        </button>
+                        <button type="submit" :disabled="state.isSavingEdit" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': state.isSavingEdit}">
+                            {{ state.isSavingEdit ? '保存中...' : '保存更改' }}
+                        </button>
                     </div>
-
-                    <div class="mb-4">
-                        <label for="edit-qq-number" class="block text-sm font-medium text-purple-300 mb-2">新QQ号</label>
-                        <input
-                            type="text"
-                            inputmode="numeric"
-                            id="edit-qq-number"
-                            v-model="state.editNewQqNumber"
-                            placeholder="留空不修改"
-                            class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none"
-                            pattern="[1-9][0-9]{4,14}"
-                            maxlength="15"
-                        >
-                    </div>
-
-                    <div class="mb-4">
-                        <label for="edit-color" class="block text-sm font-medium text-purple-300 mb-2">新颜色</label>
-                        <select id="edit-color" v-model="state.editNewColor" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
-                             <option value="">-- 留空不修改 --</option>
-                            <option value="red" :disabled="isColorDisabled('red')" :class="{'opacity-50': isColorDisabled('red')}">{{ getColorText('red') }}</option>
-                            <option value="green" :disabled="isColorDisabled('green')" :class="{'opacity-50': isColorDisabled('green')}">{{ getColorText('green') }}</option>
-                            <option value="blue" :disabled="isColorDisabled('blue')" :class="{'opacity-50': isColorDisabled('blue')}">{{ getColorText('blue') }}</option>
-                        </select>
-                    </div>
-
-                    <div class="mb-4">
-                        <label for="edit-job" class="block text-sm font-medium text-purple-300 mb-2">新职业</label>
-                        <select id="edit-job" v-model="state.editNewJob" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none bg-gray-700 appearance-none">
-                             <option value="">-- 留空不修改 --</option>
-                             <option value="attacker" :disabled="isJobDisabled('attacker')" :class="{'opacity-50': isJobDisabled('attacker')}">{{ getJobText('attacker') }}</option>
-                            <option value="defender" :disabled="isJobDisabled('defender')" :class="{'opacity-50': isJobDisabled('defender')}">{{ getJobText('defender') }}</option>
-                            <option value="supporter" :disabled="isJobDisabled('supporter')" :class="{'opacity-50': isJobDisabled('supporter')}">{{ getJobText('supporter') }}</option>
-                        </select>
-                    </div>
-                 </div>
-                <hr class="my-6 border-gray-700">
-
-                 <!-- Delete Section -->
-                 <div class="mb-6 text-center">
-                     <h4 class="text-md font-semibold mb-3 text-red-400">删除报名信息</h4>
-                     <p class="text-sm text-gray-300 mb-4">此操作不可撤销。需要输入你的舞萌ID和当前QQ号。</p>
-                    <button type="button" @click="deleteEntry" :disabled="state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="btn-glow bg-red-600 hover:bg-red-700 rounded-lg py-3 px-6 font-bold transition duration-300 text-sm" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
-                         删除我的报名信息
-                    </button>
-                 </div>
-                <hr class="my-6 border-gray-700">
-
-                <!-- Error message within modal -->
-                <transition name="fade-in-up">
-                <div v-if="state.errorMessage && state.showEditModal" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
-                    <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
-                    <span class="break-words flex-grow">{{ state.errorMessage }}</span>
-                 </div>
-                </transition>
-
-                <!-- Action Buttons -->
-                 <div class="flex space-x-4 justify-center">
-                     <button type="button" @click="closeEditModal" class="flex-1 py-3 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-700 transition text-sm font-medium max-w-[100px]">
-                         取消
-                     </button>
-                    <button type="button" @click="saveChanges" :disabled="state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()" class="flex-1 py-3 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium max-w-[180px]" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || !state.editAuthMaimaiId?.trim() || !state.editAuthQqNumber?.trim()}">
-                         {{ state.showLoadingOverlay ? '保存中...' : '保存更改' }}
-                    </button>
-                 </div>
-
+                </form>
             </div>
         </div>
 
-        <!-- Loading Overlay -->
-        <div class="loading-overlay z-40" v-show="state.showLoadingOverlay">
-            <div class="spinner"></div>
-            <p class="mt-4 text-white">
-                 {{ state.errorMessage ? state.errorMessage : '处理中，请稍候...' }}
-            </p>
-        </div>
 
-         <!-- Celebration Container -->
-        <div class="celebration z-0" id="celebration"></div>
+    </div> <!-- End of Root Container -->
 </template>
-
 <style scoped>
 /* Custom styles from previous code */
 /* Base styles */
