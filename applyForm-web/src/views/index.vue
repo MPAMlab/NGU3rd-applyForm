@@ -163,7 +163,7 @@ function showStep(stepNumber: number): void {
              const celebrationDiv = document.getElementById('celebration');
              if(celebrationDiv) celebrationDiv.innerHTML = '';
              createConfetti();
-             state.confettiInterval = setInterval(createConfetti, 2000) as number; // Explicitly cast to number
+             state.confettiInterval = setInterval(createConfetti, 2000) as unknown as number; // Explicitly cast to number
          }, 100);
     }
 }
