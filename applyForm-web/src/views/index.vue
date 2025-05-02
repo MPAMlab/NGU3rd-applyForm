@@ -1926,7 +1926,7 @@ watch(isCollectionPaused, (newValue) => {
                          <span class="text-white font-bold">个人信息</span>
                          <span class="text-white font-bold">完成</span>
                     </div>
-                    </div>
+                    <div class="mb-8"><div class="mb-8" style="width: 100%;"></div></div>
                 </div>
 
                 <!-- Success Message -->
@@ -2317,6 +2317,7 @@ watch(isCollectionPaused, (newValue) => {
          <!-- Confetti Layer -->
          <div id="celebration" class="fixed inset-0 pointer-events-none z-40"></div>
 
+    </div> <!-- End of Root container -->
 </template>
 
 <style scoped>
