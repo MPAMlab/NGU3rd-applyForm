@@ -1697,7 +1697,7 @@ watch(userMember, (newValue, oldValue) => {
             <div class="text-center text-xs text-gray-500 mt-8 relative z-10">
                  <p>{{ new Date().getFullYear() }} © NGU Team © MPAM-Lab | <a :href="websiteLink" target="_blank" rel="noopener noreferrer" class="hover:text-purple-400">{{ websiteLink.replace(/^https?:\/\/(www\.)?/, '') }}</a></p>
             </div>
-
+            
         </div> <!-- End of Container -->
 
         <!-- Modals -->
@@ -1919,8 +1919,6 @@ watch(userMember, (newValue, oldValue) => {
 
          <!-- Confetti Layer -->
          <div id="celebration" class="fixed inset-0 pointer-events-none z-40"></div>
-
-    </div> <!-- End of Root container -->
 </template>
 
 <style scoped>
