@@ -12,6 +12,7 @@ const CORS_HEADERS = {
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Admin-API-Key, Authorization', // Include Authorization header
     'Access-Control-Max-Age': '86400', // Cache preflight requests for 24 hours
+    'Access-Control-Allow-Credentials': 'true',
 };
 
 // Define JWKS outside the fetch handler to reuse the connection and cache keys
