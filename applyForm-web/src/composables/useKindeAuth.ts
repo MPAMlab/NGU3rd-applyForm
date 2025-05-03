@@ -301,7 +301,7 @@ function updateUserMember(member: Member | null): void {
 }
 
 async function logout(): Promise<void> {
-    console.log("Initiating logout via backend...");
+    console.log("Initiating logout...");
 
     // Clear frontend state immediately for responsiveness
     isAuthenticated.value = false;
@@ -320,37 +320,16 @@ async function logout(): Promise<void> {
         }
     });
 
+    console.log("Frontend state cleared. Redirecting to backend logout endpoint.");
 
-    try {
-        // Call the backend logout endpoint
-        // The backend will clear HttpOnly cookies and redirect to Kinde logout
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/logout`, {
-            method: 'POST',
-            mode: 'cors',
-            credentials: 'include', // Include cookies so backend knows who to log out
-        });
+    // MODIFIED: Replace fetch with window.location.href redirect
+    // This will trigger a top-level navigation to the backend endpoint.
+    // The browser will automatically include HttpOnly cookies for the backend domain.
+    // The backend will then clear the cookies and redirect to Kinde.
+    window.location.href = `${import.meta.env.VITE_API_BASE_URL}/logout`;
 
-        // The backend is expected to return a 302 redirect.
-        // The browser will follow the redirect and process the Set-Cookie headers.
-        if (response.redirected) {
-             console.log("Backend logout initiated successfully. Browser is following redirect.");
-             // No need to manually redirect here, the browser does it.
-        } else if (response.ok) {
-             console.warn("Backend logout returned 200 OK instead of redirect. Assuming cookies were cleared.");
-             // If backend didn't redirect, we might manually redirect as a fallback,
-             // but the backend redirect is the standard OIDC way.
-             // window.location.href = kindeConfig.logoutRedirectUri; // Fallback
-        } else {
-             console.error("Backend logout call failed:", response.status, await response.text());
-             alert("退出登录时遇到问题，请稍后再试或手动清除 Cookie。");
-        }
-
-    } catch (e) {
-        console.error("Error calling backend logout:", e);
-        alert("退出登录时连接服务器失败。");
-        // Fallback redirect on network error?
-        // window.location.href = kindeConfig.logoutRedirectUri;
-    }
+    // No need for try/catch around fetch anymore, as we're not using fetch.
+    // The browser handles the navigation and subsequent redirects.
 }
 
 // ADDED: Computed property for isAdmin status
