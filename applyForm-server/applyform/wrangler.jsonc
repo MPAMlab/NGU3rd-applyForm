@@ -63,8 +63,7 @@
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#routes
 	 */
 	"routes": [
-		{ "pattern": "signup.ngu3rd.mpam-lab.xyz/api/*", "zone_name": "mpam-lab.xyz" },
-		{ "pattern": "ngu3rd.mpam-lab.xyz/api/*", "zone_name": "mpam-lab.xyz" }
+		{ "pattern": "signup.ngu3rd.mpam-lab.xyz/api/*", "zone_name": "mpam-lab.xyz" }
 		// You can add more route objects here, separated by commas:
 		// { "pattern": "another-pattern.example.com/*", "zone_id": "YOUR_ZONE_ID" }
 	]
