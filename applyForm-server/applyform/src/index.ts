@@ -4,7 +4,6 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'; // Import jose functions
 import { Env } from './types'; // Import your updated Env interface
 import { D1Database, R2Bucket, ExecutionContext } from "@cloudflare/workers-types"; // Standard Worker types
-import { getCookie, setCookie } from 'hono/cookie';
 
 // --- Configuration & Constants ---
 const CORS_HEADERS = {
@@ -295,19 +294,14 @@ async function handleKindeCallback(request: Request, env: Env, ctx: ExecutionCon
 
         const headers = new Headers(CORS_HEADERS);
         const secure = url.protocol === 'https:' ? '; Secure' : '';
-        // Set domain for cookies to your main domain or subdomain where cookies are needed
-        // Using url.hostname is generally safer if cookies are only for this specific subdomain.
-        const domain = url.hostname; // e.g., signup.ngu3rd.mpam-lab.xyz
+        const domain = url.hostname; // Ensure this matches the domain used for clearing
 
-        // Set Access Token cookie (short-lived, used for API auth)
+        // Set Access Token cookie
         headers.append('Set-Cookie', `kinde_access_token=${access_token}; HttpOnly; Path=/; Max-Age=${expires_in}; SameSite=Lax${secure}; Domain=${domain}`);
 
-        // Set Refresh Token cookie (long-lived, used to get new access tokens)
-        // Kinde's refresh token flow needs to be implemented if you want sessions longer than access token expiry
-        // For simplicity now, let's just set it, but you'd need a /refresh endpoint
+        // Set Refresh Token cookie
         if (refresh_token) {
-             // Set refresh token expiry longer, e.g., 30 days (adjust as needed)
-             const refreshTokenMaxAge = 30 * 24 * 60 * 60; // 30 days in seconds
+             const refreshTokenMaxAge = 30 * 24 * 60 * 60; // 30 days
              headers.append('Set-Cookie', `kinde_refresh_token=${refresh_token}; HttpOnly; Path=/; Max-Age=${refreshTokenMaxAge}; SameSite=Lax${secure}; Domain=${domain}`);
         }
 
@@ -1279,19 +1273,14 @@ async function handleLogout(request: Request, env: Env, ctx: ExecutionContext): 
 
     // --- Configuration Check ---
     const kindeIssuerUrl = env.KINDE_ISSUER_URL;
-
-    // *** MODIFIED: Use the specific secret you just set ***
-    // This URL MUST be listed in your Kinde application's "Allowed logout redirect URIs"
-    const logoutRedirectTargetUrl = env.LOGOUT_REDIRECT_TARGET_URL; // Use the new secret name
+    const logoutRedirectTargetUrl = env.LOGOUT_REDIRECT_TARGET_URL;
 
     if (!kindeIssuerUrl) {
         console.error('KINDE_ISSUER_URL is not configured.');
         return apiError('Logout service configuration error.', 500);
     }
-    // *** ADDED: Check if the new secret is set ***
     if (!logoutRedirectTargetUrl) {
         console.error('LOGOUT_REDIRECT_TARGET_URL secret is not set. Cannot determine Kinde logout redirect target.');
-        // It's safer to return an error than to guess a redirect URL that might not be allowed by Kinde.
         return apiError('Logout configuration error: Target URL not set in secrets.', 500);
     }
 
@@ -1299,28 +1288,43 @@ async function handleLogout(request: Request, env: Env, ctx: ExecutionContext): 
 
     // --- Construct Kinde Logout URL ---
     const kindeLogoutUrl = new URL(`${kindeIssuerUrl}/logout`);
-    // *** Use the value from the secret ***
     kindeLogoutUrl.searchParams.append('redirect', logoutRedirectTargetUrl);
     console.log('Calculated Kinde logout URL:', kindeLogoutUrl.toString());
 
-    // --- Prepare Headers for Deleting Cookies ---
-    const headers = new Headers();
-    Object.entries(CORS_HEADERS).forEach(([key, value]) => headers.set(key, value));
+    // 创建第一个用于清除 access token 的响应
+    const accessTokenHeaders = new Headers();
+    Object.entries(CORS_HEADERS).forEach(([key, value]) => accessTokenHeaders.set(key, value));
     const secureFlag = url.protocol === 'https:' ? '; Secure' : '';
     const domain = url.hostname;
-    headers.append('Set-Cookie', `kinde_access_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
-    headers.append('Set-Cookie', `kinde_refresh_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
-    console.log('Set-Cookie headers prepared for deletion.');
-
-    // --- Return Redirect Response ---
+    
+    accessTokenHeaders.set('Set-Cookie', `kinde_access_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
+    
+    // 创建第二个用于清除 refresh token 的响应，这个响应将会重定向到 Kinde 注销页面
+    const refreshTokenHeaders = new Headers();
+    Object.entries(CORS_HEADERS).forEach(([key, value]) => refreshTokenHeaders.set(key, value));
+    refreshTokenHeaders.set('Set-Cookie', `kinde_refresh_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
+    refreshTokenHeaders.set('Location', kindeLogoutUrl.toString());
+    
+    // 在当前环境中无法同时发送两个响应，所以我们需要合并两个头
+    const combinedHeaders = new Headers();
+    
+    // 先添加所有 CORS 相关头
+    Object.entries(CORS_HEADERS).forEach(([key, value]) => combinedHeaders.set(key, value));
+    
+    // 添加两个 Set-Cookie 头，但使用不同的写法
+    combinedHeaders.set('Set-Cookie', `kinde_access_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
+    combinedHeaders.append('Set-Cookie', `kinde_refresh_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secureFlag}; Domain=${domain}`);
+    
+    // 添加重定向头
+    combinedHeaders.set('Location', kindeLogoutUrl.toString());
+    
     return new Response(null, {
         status: 302, // Found (Redirect)
-        headers: {
-            ...Object.fromEntries(headers.entries()),
-            'Location': kindeLogoutUrl.toString(),
-        }
+        headers: combinedHeaders,
     });
 }
+
+
 
 // --- Main Worker Fetch Handler ---
 
@@ -1415,9 +1419,10 @@ export default {
             }
 
             // Kinde Logout Endpoint
-            else if (method === 'POST' && pathname === '/api/logout') {
-                 return handleLogout(request, env, ctx);
-            }
+            else if ((method === 'POST' || method === 'GET') && pathname === '/api/logout') {
+                console.log(`Handling /api/logout with method: ${method}`); // Added log to confirm method
+                return handleLogout(request, env, ctx);
+           }
 
             // Public Settings Endpoint (NEW)
             else if (method === 'GET' && pathname === '/api/settings') {

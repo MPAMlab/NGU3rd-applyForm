@@ -96,11 +96,6 @@ async function fetchUserMember(): Promise<void> {
             isAuthenticated.value = true;
             console.log("Backend /members/me returned OK. User is authenticated.");
 
-            // *** REMOVED THE CALL TO fetchKindeUserInfo() HERE ***
-            // We rely on the backend /members/me to tell us if the user is registered
-            // and provide necessary member details including kinde_user_id and is_admin.
-            // Fetching generic Kinde user info is not needed for the core auth status check.
-
         } else if (response.status === 401) {
             console.warn("Backend /members/me returned 401. User is not authenticated.");
             // authenticatedFetch already clears state and cookies on 401, but explicit clear is fine
@@ -125,11 +120,6 @@ async function fetchUserMember(): Promise<void> {
         userMember.value = null;
     }
 }
-
-// *** REMOVED fetchKindeUserInfo function entirely ***
-// It's no longer called from fetchUserMember and is not needed for the core flow.
-// If you need Kinde user details (name, email) elsewhere, you might fetch them
-// differently or rely on the ID token payload during callback if needed.
 
 
 const OAUTH_STATE_CONTEXT_STORAGE_KEY_PREFIX = 'kinde_oauth_context_';
