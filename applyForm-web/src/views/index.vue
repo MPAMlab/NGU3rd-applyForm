@@ -58,7 +58,7 @@ interface State {
     avatarFile: File | null;
     avatarPreviewUrl: string | null;
     showEditModal: boolean;
-    editMemberId: number | null;
+    editMemberId: number | null; // Note: Backend uses maimaiId for PATCH/DELETE, this might be redundant
     editNewNickname: string | null;
     editNewQqNumber: string | null;
     editNewColor: 'red' | 'green' | 'blue' | null;
@@ -68,11 +68,13 @@ interface State {
     editClearAvatarFlag: boolean;
     showConfirmModal: boolean;
     showCreateModal: boolean;
+    showTeamFullInfoModal: boolean; // ADDED: State for Team Full modal
     showLoadingOverlay: boolean; // Global loading for API calls
     errorMessage: string | null; // Global error message
-    editModalErrorMessage: string | null;
-    currentTeamMembers: Member[];
-    completionAllMembers: Member[];
+    editModalErrorMessage: string | null; // Error message specifically for the edit modal
+    currentTeamMembers: Member[]; // Members fetched for the current team code (used in Step 2, 3, 4, Modals)
+    completionAllMembers: Member[]; // Members displayed on the completion page (Step 6)
+
     confettiInterval: number | null; // Explicitly number | null
 
     eventInfo: {
@@ -84,7 +86,7 @@ interface State {
 }
 
 const state: State = reactive({
-    currentStep: 0,
+    currentStep: 0, // 0: Entry, 1: Auth, 2: Team Code, 3: Color, 4: Job, 5: Personal Info, 6: Completion
     teamCode: null,
     teamName: null,
     isNewTeam: false,
@@ -108,6 +110,7 @@ const state: State = reactive({
     editClearAvatarFlag: false,
     showConfirmModal: false,
     showCreateModal: false,
+    showTeamFullInfoModal: false, // Initialize new state
     showLoadingOverlay: false,
     errorMessage: null,
     editModalErrorMessage: null,
@@ -125,14 +128,14 @@ const state: State = reactive({
 
 // --- Computed Properties ---
 const progressWidth = computed(() => {
-    // Map step number directly to percentage
+    // Map step number directly to percentage based on NEW flow
     const progressMap: { [key: number]: number } = {
         0: 0,   // Entry
-        1: 0,   // Team Code
-        2: 0,   // Auth Prompt (Bar starts here, 0%)
-        3: 25,  // Color
-        4: 50,  // Job
-        5: 75,  // Personal Info
+        1: 0,   // Auth (Bar starts here, 0%)
+        2: 20,  // Team Code
+        3: 40,  // Color
+        4: 60,  // Job
+        5: 80,  // Personal Info
         6: 100  // Completion
     };
     // Get the percentage directly from the map based on the current step
@@ -142,22 +145,24 @@ const progressWidth = computed(() => {
 
 const isColorDisabled = computed(() => (color: 'red' | 'green' | 'blue') => {
      // If editing, the current color is allowed
-     if (state.showEditModal && state.editMemberId !== null) {
-         const memberBeingEdited = state.currentTeamMembers.find(m => m.id === state.editMemberId);
-         if (memberBeingEdited && memberBeingEdited.color === color) return false;
+     if (state.showEditModal && currentUserMember.value) { // Use currentUserMember for edit modal context
+         if (currentUserMember.value.color === color) return false;
      }
     // Otherwise, check if any other member in the current team has this color
-    return state.currentTeamMembers.some(member => member.color === color);
+    // Filter out the current user if they are in the list (relevant for edit modal)
+    const membersToCheck = state.currentTeamMembers.filter(m => !(isAuthenticated.value && kindeUser.value && m.kinde_user_id === kindeUser.value.id));
+    return membersToCheck.some(member => member.color === color);
 });
 
 const isJobDisabled = computed(() => (jobType: 'attacker' | 'defender' | 'supporter') => {
      // If editing, the current job is allowed
-     if (state.showEditModal && state.editMemberId !== null) {
-         const memberBeingEdited = state.currentTeamMembers.find(m => m.id === state.editMemberId);
-         if (memberBeingEdited && memberBeingEdited.job === jobType) return false;
+     if (state.showEditModal && currentUserMember.value) { // Use currentUserMember for edit modal context
+         if (currentUserMember.value.job === jobType) return false;
      }
     // Otherwise, check if any other member in the current team has this job
-    return state.currentTeamMembers.some(member => member.job === jobType);
+    // Filter out the current user if they are in the list (relevant for edit modal)
+    const membersToCheck = state.currentTeamMembers.filter(m => !(isAuthenticated.value && kindeUser.value && m.kinde_user_id === kindeUser.value.id));
+    return membersToCheck.some(member => member.job === jobType);
 });
 
 
@@ -186,7 +191,8 @@ function showStep(stepNumber: number): void {
     }
 
     state.currentStep = stepNumber;
-    state.errorMessage = null; // Clear error when changing steps
+    state.errorMessage = null; // Clear global error when changing steps
+    state.editModalErrorMessage = null; // Clear modal error when changing steps
 
     // Start confetti when entering the completion step
     if (stepNumber === 6) {
@@ -200,6 +206,9 @@ function showStep(stepNumber: number): void {
 }
 
 async function handleContinue(): Promise<void> {
+    // This function is now called from Step 2 (Team Code Input)
+    // User is expected to be authenticated at this point.
+
     // ADDED: Check Collection Status at the start of the flow
     if (isCollectionPaused.value) {
         state.errorMessage = '现在的组队已停止，如需更多信息，请访问官网或咨询管理员。';
@@ -209,7 +218,7 @@ async function handleContinue(): Promise<void> {
     // END ADDED
 
     const code = state.teamCode ? state.teamCode.trim() : '';
-    state.errorMessage = null;
+    state.errorMessage = null; // Clear previous errors
 
     if (code.length !== 4 || isNaN(parseInt(code))) {
         state.errorMessage = '请输入4位数字的组队码。';
@@ -231,7 +240,7 @@ async function handleContinue(): Promise<void> {
              const data = await response.json().catch(() => ({}));
              state.errorMessage = data.error || '操作被拒绝。'; // Use the specific message from backend
              console.log('Backend returned 403, likely due to paused collection.');
-             showStep(1); // Stay on the input step
+             // Stay on Step 2 (Team Code)
              return; // Stop here
         }
         // END ADDED
@@ -249,7 +258,7 @@ async function handleContinue(): Promise<void> {
             const data = await response.json();
             console.error('API error checking team:', response.status, response.statusText, data);
             state.errorMessage = data.error || `检查队伍失败 (${response.status})`;
-            showStep(1); // Stay on the input step
+            // Stay on Step 2 (Team Code)
         } else { // Handle 200 OK response (team found)
             const data = await response.json();
             console.log(`Team code ${code} found. Proceeding to join/view flow.`);
@@ -257,66 +266,53 @@ async function handleContinue(): Promise<void> {
             state.teamName = data.name;
             state.currentTeamMembers = data.members || [];
 
-            // --- Existing success logic for joining/viewing team ---
              // Check if the logged-in user is already a member of this specific team
              const userIsMember = isAuthenticated.value && userMember.value && state.currentTeamMembers.some(member => member.kinde_user_id === userMember.value?.kinde_user_id);
 
-             if (isAuthenticated.value && userMember.value && userIsMember) { // Use userMember.value directly
+             if (isAuthenticated.value && userMember.value && userIsMember) { // User is logged in AND is a member of THIS team
                   state.completionAllMembers = state.currentTeamMembers;
                   console.log("User is already a member of this team. Redirecting to completion.");
                   showStep(6); // Go to completion page
-             } else if (isAuthenticated.value && userMember.value && !userIsMember) { // Use userMember.value directly
+             } else if (isAuthenticated.value && userMember.value && !userIsMember) { // User is logged in BUT is a member of ANOTHER team
                   state.errorMessage = '你已经报名参加了其他队伍，一个账号只能报名一次。';
-                  showStep(1); // Go back to team code step
+                  // Stay on Step 2 (Team Code)
              }
-             else if (state.currentTeamMembers.length >= 3) {
-                  state.errorMessage = `队伍 ${state.teamCode} 已满 (${state.currentTeamMembers.length}/3)，无法加入。`;
-                  showStep(1); // Go back to team code step
+             else if (state.currentTeamMembers.length >= 3) { // Team is full, and user is NOT a member of THIS team
+                  console.log(`Team ${state.teamCode} is full. Showing info modal.`);
+                  state.errorMessage = null; // Clear global error, modal shows specific message
+                  state.showTeamFullInfoModal = true; // Show the Team Full Info modal
+                  // Stay on Step 2 (Team Code)
              }
-             else {
+             else { // Team found, not full, and user is not a member (ready to join)
                   state.isNewTeam = false;
                   state.showConfirmModal = true; // Show confirmation modal before proceeding
+                  // Stay on Step 2 (Team Code) until confirmed
              }
-            // --- End existing success logic ---
         }
 
     } catch (e: any) { // Catch network errors or errors thrown by the new logic
         console.error('Fetch error checking team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
-        showStep(1); // Stay on the input step
+        // Stay on Step 2 (Team Code)
     } finally {
        state.showLoadingOverlay = false; // Hide loading overlay in all cases
     }
 }
 
 function confirmJoinTeam(): void {
+    // This function is called from the Confirm Join Modal.
+    // User is expected to be authenticated and not registered in another team.
     state.showConfirmModal = false; // Close the confirmation modal
-    // The logic to decide the next step (auth prompt or personal info)
-    // is now handled by the flow *after* handleContinue determines the team exists and is joinable.
-    // If handleContinue successfully finds a joinable team, it sets state.showConfirmModal = true.
-    // Clicking "确认加入" calls this function.
-    // Now, we check auth status again to decide the *next* step after confirmation.
 
-    if (isAuthenticated.value) {
-        if (userMember.value) { // Check userMember.value directly
-             // This case should ideally not be reachable if handleContinue logic is correct,
-             // but as a safeguard:
-             state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-             showStep(1); // Go back to team code step
-        } else {
-            // Authenticated but not registered -> proceed to fill info
-            console.log("User confirmed join, authenticated, not registered. Proceeding to step 3.");
-            showStep(3); // Go to personal info step
-        }
-    } else {
-        // Not authenticated -> prompt for login/register
-        console.log("User confirmed join, not authenticated. Proceeding to step 2 (auth prompt).");
-        state.errorMessage = '请先登录或注册以继续报名。'; // Inform the user why they are going to step 2
-        showStep(2); // Go to authentication prompt step
-    }
+    // Proceed to fill personal info (Step 3)
+    console.log("User confirmed join. Proceeding to step 3.");
+    showStep(3); // Go to Color Selection step
 }
 
 async function createNewTeam(): Promise<void> {
+    // This function is called from the Create Team Modal.
+    // User is expected to be authenticated and not registered in another team.
+
     // ADDED: Check Collection Status at the start of the flow
     if (isCollectionPaused.value) {
         state.errorMessage = '现在的组队已停止，如需更多信息，请访问官网或咨询管理员。';
@@ -356,7 +352,7 @@ async function createNewTeam(): Promise<void> {
              state.errorMessage = data.error || '操作被拒绝。'; // Use the specific message from backend
              console.log('Backend returned 403, likely due to paused collection.');
              state.showCreateModal = false; // Close modal
-             showStep(1); // Go back to input step
+             // Stay on Step 2 (Team Code)
              return; // Stop here
         }
         // END ADDED
@@ -375,30 +371,16 @@ async function createNewTeam(): Promise<void> {
         state.showCreateModal = false; // Close the create modal
 
         // After creating the team, the user needs to join it.
-        // The next step depends on their authentication status.
-        if (isAuthenticated.value) {
-             if (userMember.value) { // Check userMember.value directly
-                  // This case should ideally not be reachable if user is already registered
-                  state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
-                  showStep(1); // Go back to team code step
-             } else {
-                 // Authenticated but not registered -> proceed to fill info for the *newly created* team
-                 console.log("User created team, authenticated, not registered. Proceeding to step 3.");
-                 showStep(3); // Go to personal info step
-             }
-        } else {
-             // Not authenticated -> prompt for login/register
-             console.log("User created team, not authenticated. Proceeding to step 2 (auth prompt).");
-             state.errorMessage = '请先登录或注册以继续报名。'; // Inform the user why they are going to step 2
-             showStep(2); // Go to authentication prompt step
-        }
+        // Proceed to fill personal info (Step 3)
+        console.log("User created team. Proceeding to step 3.");
+        showStep(3); // Go to Color Selection step
 
 
     } catch (e: any) {
         console.error('Fetch error creating team:', e);
         state.errorMessage = e.message || '连接服务器失败，请稍后再试。';
         state.showCreateModal = false; // Close modal on error
-        showStep(1); // Go back to input step on error
+        // Stay on Step 2 (Team Code) on error
     } finally {
         state.showLoadingOverlay = false; // Hide loading overlay
     }
@@ -491,6 +473,9 @@ function clearAvatarFile(): void {
 
 
 async function handleSubmitPersonalInfo(): Promise<void> {
+    // This function is called from Step 5 (Personal Info)
+    // User is expected to be authenticated and not registered yet.
+
     // ADDED: Check Collection Status at the start of the flow
     if (isCollectionPaused.value) {
         state.errorMessage = '现在的组队已停止，如需更多信息，请访问官网或咨询管理员。';
@@ -502,13 +487,15 @@ async function handleSubmitPersonalInfo(): Promise<void> {
 
     state.errorMessage = null;
 
+    // Redundant check as user should be authenticated to reach this step, but kept for safety
     if (!isAuthenticated.value) {
          console.error("Attempted to submit join form while not authenticated.");
-         state.errorMessage = '请先登录或注册以继续报名。';
-         showStep(2); // Go back to auth prompt
+         state.errorMessage = '认证状态异常，请尝试重新登录。';
+         // Maybe go back to auth step? Or just show error. Staying on step 5 for now.
          state.showLoadingOverlay = false; // Ensure loading is off
          return;
     }
+     // Redundant check as user should not have userMember yet, but kept for safety
      if (userMember.value) { // Check userMember.value directly
           console.error("Attempted to submit join form while already registered.");
           state.errorMessage = '你已经报名过了，一个账号只能报名一次。';
@@ -581,7 +568,7 @@ async function handleSubmitPersonalInfo(): Promise<void> {
              const data = await response.json().catch(() => ({}));
              state.errorMessage = data.error || '操作被拒绝。'; // Use the specific message from backend
              console.log('Backend returned 403, likely due to paused collection.');
-             showStep(1); // Go back to input step
+             // Stay on Step 5 (Personal Info) or maybe go back to Step 2? Staying on 5 for now.
              return; // Stop here
         }
         // END ADDED
@@ -605,40 +592,16 @@ async function handleSubmitPersonalInfo(): Promise<void> {
         // Update the userMember state with the newly created member data
         if (data.member) {
             updateUserMember(data.member as Member); // Update the central userMember state
-            // Also update the local currentTeamMembers list for immediate display
-            // Find the index of the user's old entry (if any, though should be none here) or add the new one
-            const existingIndex = state.currentTeamMembers.findIndex(m => m.kinde_user_id === (data.member as Member).kinde_user_id);
-            if (existingIndex !== -1) {
-                 state.currentTeamMembers[existingIndex] = data.member as Member;
-            } else {
-                 state.currentTeamMembers.push(data.member as Member);
-            }
-            state.completionAllMembers = state.currentTeamMembers; // Update completion list
+            // The watch on userMember will handle navigation to Step 6
         } else {
             console.warn("Join success response did not include a member object. Re-fetching...");
             // If backend didn't return member, re-fetch auth status to get it
             await checkAuthStatus(); // This will call /members/me and update userMember
-            await fetchTeamMembers(state.teamCode!); // Re-fetch team members to update list
-            state.completionAllMembers = state.currentTeamMembers; // Update completion list
+            // The watch on userMember will handle navigation to Step 6
         }
 
-        // --- ADDED: Scroll to the completion step after showing it ---
-        showStep(6); // Change the step
-        nextTick(() => { // Wait for DOM to update
-            const completionDiv = document.getElementById('step-completion');
-            if (completionDiv) {
-                completionDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else {
-                // Fallback scroll to top of the main content area
-                const mainContent = document.querySelector('.w-full.max-w-md.mx-auto.relative.z-10');
-                if (mainContent) {
-                    mainContent.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-            }
-        });
-        // --- END ADDED ---
+        // The watch on userMember becoming non-null will trigger showStep(6)
+        // We don't explicitly call showStep(6) here to avoid race conditions with the watch.
 
 
     } catch (e: any) {
@@ -652,7 +615,11 @@ async function handleSubmitPersonalInfo(): Promise<void> {
 }
 
 async function fetchTeamMembers(teamCode: string): Promise<void> {
-     if (!teamCode) return;
+     if (!teamCode) {
+         state.currentTeamMembers = [];
+         state.teamName = null;
+         return;
+     }
      console.log(`Fetching members for team ${teamCode}...`);
      try {
          const response = await fetch(`${API_BASE_URL}/teams/${teamCode}`, {
@@ -746,7 +713,7 @@ function goHome(): void {
 
     // Reset all relevant state properties
     Object.assign(state, {
-        currentStep: 0,
+        currentStep: 0, // Go back to Entry
         teamCode: null,
         teamName: null,
         isNewTeam: false,
@@ -770,8 +737,10 @@ function goHome(): void {
         editClearAvatarFlag: false,
         showConfirmModal: false,
         showCreateModal: false,
+        showTeamFullInfoModal: false, // Reset new modal state
         showLoadingOverlay: false,
         errorMessage: null, // Clear global error
+        editModalErrorMessage: null, // Clear modal error
         currentTeamMembers: [],
         completionAllMembers: [],
         confettiInterval: null, // Clear confetti interval
@@ -781,14 +750,16 @@ function goHome(): void {
     const celebrationDiv = document.getElementById('celebration');
     if(celebrationDiv) celebrationDiv.innerHTML = '';
 
-    // Clean up URL params if not a share link
+    // Clean up URL params if not a share link (share link has 'code')
+    // Kinde callback params ('code', 'state') are handled and cleared by handleCallback/router.replace
     const urlParams = new URLSearchParams(window.location.search);
-    if (!urlParams.has('code') && !urlParams.has('state')) { // Only clear if no code or state params
+    if (!urlParams.has('code')) { // Only clear if no 'code' param (which might be a share link)
         history.replaceState(null, '', window.location.pathname);
     }
 
     // Re-check auth status to determine if user is logged in or not for the initial step 0 display
-    checkAuthStatus(); // This will update isAuthenticated and userMember
+    // This is done implicitly by the watch on isAuthenticated/userMember after checkAuthStatus runs on mount.
+    // No need to explicitly call checkAuthStatus here again, as it runs on mount.
 }
 
 function createConfetti(): void {
@@ -844,6 +815,7 @@ function openEditModalForUser(): void {
    state.editNewAvatarFile = null; // No new file selected initially
    state.editClearAvatarFlag = false; // Not checked initially
    state.errorMessage = null; // Clear global error
+   state.editModalErrorMessage = null; // Clear modal error
    state.showEditModal = true; // Show the modal
    console.log("Edit modal opened for user member ID:", state.editMemberId);
 }
@@ -852,6 +824,7 @@ function closeEditModal(): void {
    console.log("Closing edit modal.");
    state.showEditModal = false;
    state.errorMessage = null; // Clear global error
+   state.editModalErrorMessage = null; // Clear modal error
    // Clean up blob URL if it exists
     if (state.editNewAvatarPreviewUrl && state.editNewAvatarPreviewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(state.editNewAvatarPreviewUrl);
@@ -935,13 +908,14 @@ async function saveChanges(): Promise<void> {
     state.errorMessage = null; // Clear global error
     state.editModalErrorMessage = null; // Clear modal error
 
-    if (!state.editMemberId || !currentUserMember.value) {
-         console.error("Attempted to save changes, but editMemberId or currentUserMember is missing.");
+    if (!currentUserMember.value) { // Use currentUserMember directly
+         console.error("Attempted to save changes, but currentUserMember is missing.");
          state.editModalErrorMessage = "无法找到你的报名信息进行修改。";
          return;
     }
 
      // Validation for fields that can be changed
+     // Only validate if the field is NOT null (meaning user interacted with it)
      if (state.editNewNickname !== null && (state.editNewNickname.trim().length === 0 || state.editNewNickname.trim().length > 50)) {
           state.editModalErrorMessage = '新称呼长度需在1到50个字符之间。';
           return;
@@ -951,6 +925,16 @@ async function saveChanges(): Promise<void> {
          return;
      }
       // Color and Job validation is implicitly done by the select options being disabled
+      // Also check if the *selected* new color/job is now disabled (could happen if another member updates)
+      if (state.editNewColor !== null && state.editNewColor !== currentUserMember.value.color && isColorDisabled.value(state.editNewColor)) {
+           state.editModalErrorMessage = `选择的元素 '${getColorText(state.editNewColor)}' 已被队伍其他成员占用。`;
+           return;
+      }
+      if (state.editNewJob !== null && state.editNewJob !== currentUserMember.value.job && isJobDisabled.value(state.editNewJob)) {
+           state.editModalErrorMessage = `选择的职业 '${getJobText(state.editNewJob)}' 已被队伍其他成员占用。`;
+           return;
+      }
+
 
     // Check if any changes were actually made
     const originalMember = currentUserMember.value;
@@ -969,7 +953,7 @@ async function saveChanges(): Promise<void> {
     state.showLoadingOverlay = true; // Use global loading
     try {
         const formData = new FormData();
-         // Only append fields that have changed
+         // Only append fields that have changed or are explicitly being cleared (avatar)
          if (isNicknameChanged) {
              formData.append('nickname', state.editNewNickname!.trim());
          }
@@ -991,10 +975,15 @@ async function saveChanges(): Promise<void> {
             formData.append('clearAvatar', 'true'); // Explicitly clear existing avatar
              console.log("Appending clearAvatar=true for update.");
          } else {
-             formData.append('clearAvatar', 'false'); // Explicitly tell backend not to change avatar
+             // If no new file and clearAvatarFlag is false, explicitly tell backend not to change avatar
+             formData.append('clearAvatar', 'false');
+             console.log("Appending clearAvatar=false (no avatar change).");
          }
 
         const targetMaimaiId = currentUserMember.value.maimai_id;
+        if (!targetMaimaiId) {
+             throw new Error("无法获取当前用户的舞萌ID进行修改。");
+        }
         console.log("Sending PATCH request to:", `${API_BASE_URL}/members/${targetMaimaiId}`);
          const response = await authenticatedFetch(`${API_BASE_URL}/members/${targetMaimaiId}`, {
              method: 'PATCH',
@@ -1009,7 +998,7 @@ async function saveChanges(): Promise<void> {
                  errorMsg = '认证失败，请重新登录。';
                  logout(); // Log out if auth fails
              } else if (data.error?.includes('already taken')) {
-                 errorMsg = '选择的颜色/职业已被队伍其他成员占用。';
+                 errorMsg = '选择的元素/职业已被队伍其他成员占用。';
              } else if (data.error?.includes('not found')) {
                  errorMsg = '未找到你的报名信息。';
              }
@@ -1021,22 +1010,9 @@ async function saveChanges(): Promise<void> {
          if (data.member) {
              // MODIFIED: Use the composable's update function
              updateUserMember(data.member as Member);
-             const updatedMaimaiId = (data.member as Member).maimai_id?.toString();
-             if (updatedMaimaiId) {
-                 // Update the member in the local lists (currentTeamMembers and completionAllMembers)
-                 const updateList = (list: Member[]) => {
-                     const index = list.findIndex(m => m.maimai_id?.toString() === updatedMaimaiId);
-                     if (index !== -1) {
-                          // Create a new object to ensure reactivity updates
-                          list[index] = { ...list[index], ...(data.member as Member) };
-                         console.log("Updated member in local list.");
-                     } else {
-                        console.warn("Updated member not found in local list after PATCH.");
-                     }
-                 };
-                 updateList(state.completionAllMembers);
-                 updateList(state.currentTeamMembers);
-             }
+             // Re-fetch team members to update the list displayed on Step 6
+             await fetchTeamMembers(state.teamCode!);
+             state.completionAllMembers = state.currentTeamMembers; // Update completion list
          } else {
               console.warn("PATCH success response did not include an updated member object. Re-fetching...");
               // MODIFIED: Rely on checkAuthStatus to update userMember
@@ -1063,8 +1039,8 @@ async function deleteEntry(): Promise<void> {
      state.errorMessage = null; // Clear global error
      state.editModalErrorMessage = null; // Clear modal error
 
-    if (!state.editMemberId || !currentUserMember.value) {
-         console.error("Attempted to delete, but editMemberId or currentUserMember is missing.");
+    if (!currentUserMember.value) { // Use currentUserMember directly
+         console.error("Attempted to delete, but currentUserMember is missing.");
          state.editModalErrorMessage = "无法找到你的报名信息进行删除。";
          return;
     }
@@ -1076,6 +1052,9 @@ async function deleteEntry(): Promise<void> {
     state.showLoadingOverlay = true; // Use global loading
     try {
          const targetMaimaiId = currentUserMember.value.maimai_id;
+         if (!targetMaimaiId) {
+             throw new Error("无法获取当前用户的舞萌ID进行删除。");
+         }
          console.log("Sending DELETE request to:", `${API_BASE_URL}/members/${targetMaimaiId}`);
          const response = await authenticatedFetch(`${API_BASE_URL}/members/${targetMaimaiId}`, {
              method: 'DELETE',
@@ -1090,43 +1069,9 @@ async function deleteEntry(): Promise<void> {
              // MODIFIED: Use the composable's update function
              updateUserMember(null); // Clear the central userMember state
 
-             const deletedMaimaiId = targetMaimaiId;
-             // Filter the member out of local lists
-             state.completionAllMembers = state.completionAllMembers.filter(
-                  member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
-             );
-             state.currentTeamMembers = state.currentTeamMembers.filter(
-                 member => member.maimai_id?.toString() !== deletedMaimaiId?.toString()
-             );
-             console.log(`Removed member ${deletedMaimaiId} from local state.`);
-
-              closeEditModal(); // Close the edit modal
-
-             // Decide where to go next
-             if (state.currentStep === 6) {
-                  // If deleted from the completion page
-                  if (state.completionAllMembers.length === 0) {
-                       console.log("Team is now empty after deletion from Step 6. Navigating home.");
-                       // If the team is now empty, go back to the very start
-                       setTimeout(() => {
-                            goHome(); // goHome resets state and checks auth
-                             state.errorMessage = null; // Clear the success message after going home
-                       }, 2000);
-                  } else {
-                       // If the team is not empty, stay on step 6 but update the list
-                       state.errorMessage = '报名信息已成功删除！队伍列表已更新。';
-                       // Re-fetch team members to be sure the list is accurate
-                       fetchTeamMembers(state.teamCode!);
-                       setTimeout(() => { state.errorMessage = null; }, 3000); // Clear success message
-                  }
-             } else {
-                   // If deleted from edit modal on another step (e.g., step 3/4)
-                   state.errorMessage = '报名信息已成功删除！';
-                   // Re-fetch team members for the current team code
-                   fetchTeamMembers(state.teamCode!);
-                   // The watch on userMember becoming null will handle showing step 0 if needed
-                   setTimeout(() => { state.errorMessage = null; }, 3000); // Clear success message
-             }
+             // The watch on userMember becoming null will handle navigation to Step 0 (Home)
+             // and clearing local state.
+             closeEditModal(); // Close the edit modal immediately
 
          } else {
              const data = await response.json();
@@ -1191,8 +1136,8 @@ function createTriangleBackground(): void {
 // In the template, change @click="login('login')" to @click="initiateLogin('login')"
 // and @click="login('create')" to @click="initiateLogin('create')"
 function initiateLogin(prompt: 'login' | 'create'): void {
-    // Pass the current teamCode and step as context
-    login(prompt, { teamCode: state.teamCode, currentStep: state.currentStep });
+    // Pass the current step as context. Team code context is less relevant now.
+    login(prompt, { currentStep: state.currentStep });
 }
 // --- Lifecycle Hooks ---
 
@@ -1227,45 +1172,24 @@ onMounted(async () => {
             console.log("Callback handled successfully.");
             // After successful callback, checkAuthStatus has been run,
             // isAuthenticated and userMember are updated.
-            // Now, use the context to potentially redirect the user back to where they were.
-            if (callbackResult.context) {
-                 console.log("Restoring context:", callbackResult.context);
-                 state.teamCode = callbackResult.context.teamCode;
-                 // Re-evaluate the state based on the updated userMember and restored teamCode
-                 if (userMember.value) {
-                      // User is now registered (or was already)
-                      state.teamCode = userMember.value.team_code; // Ensure teamCode is correct from member data
-                      await fetchTeamMembers(state.teamCode); // Fetch team members for completion page
-                      state.completionAllMembers = state.currentTeamMembers;
-                      showStep(6); // Go to completion page
-                 } else if (state.teamCode) {
-                      // User logged in but not registered, and had a teamCode context
-                      // Re-check the team and go to step 2 or 3
-                      // Use nextTick to ensure state.teamCode is set before handleContinue runs
-                      nextTick(() => {
-                          handleContinue(); // This will re-check the team and move to step 2 or 3
-                      });
-                 } else {
-                      // User logged in but not registered, no teamCode context
-                      showStep(0); // Go to step 0 (login/register prompt)
-                 }
-
-            } else {
-                 // No context, just logged in. Check if registered.
-                 if (userMember.value) {
-                      state.teamCode = userMember.value.team_code;
-                      await fetchTeamMembers(state.teamCode);
-                      state.completionAllMembers = state.currentTeamMembers;
-                      showStep(6); // Go to completion page
-                 } else {
-                      showStep(0); // Go to step 0 (login/register prompt)
-                 }
-            }
+            // The watch on userMember will now handle navigation.
+            // If userMember is not null, watch will go to Step 6.
+            // If userMember is null (shouldn't happen after successful login/register),
+            // we should go to Step 1 (Auth Prompt) or Step 2 (Team Code) depending on context?
+            // Let's rely on the watch for userMember becoming non-null to go to Step 6.
+            // If userMember is still null after callback (error?), go to Step 1.
+             if (userMember.value) {
+                 // Watch will handle navigation to Step 6
+                 console.log("Callback success, userMember exists. Watch will navigate to Step 6.");
+             } else {
+                 console.warn("Callback success, but userMember is null. Navigating to Step 1.");
+                 showStep(1); // Go to Auth Prompt (should show logged-in state)
+             }
 
         } else {
             console.error("Callback handling failed:", callbackResult.error);
             state.errorMessage = callbackResult.error;
-            showStep(0); // Go back to login/register prompt on failure
+            showStep(1); // Go back to Auth Prompt on failure
         }
     }
     // Initial load (not a callback)
@@ -1282,9 +1206,9 @@ onMounted(async () => {
         }
         // If user is authenticated but has NO member record yet
         else if (isAuthenticated.value && !userMember.value) { // Use userMember.value directly
-            console.log("onMounted: User is authenticated but not registered. Prompting for team code.");
-            // User is logged in but not registered. Show the entry page or team code page.
-            showStep(0); // Or showStep(1) if you want them to re-enter code
+            console.log("onMounted: User is authenticated but not registered. Showing step 1 (Auth Prompt).");
+            // User is logged in but not registered. Show the auth prompt (which will show "You are logged in").
+            showStep(1);
         }
         // If none of the above, the user is not authenticated
         else {
@@ -1294,16 +1218,13 @@ onMounted(async () => {
 
          // If there's a team code in the URL on initial load (e.g., shared link)
          // This check should happen AFTER determining the user's auth/registration status
-         // to avoid immediately jumping to team check if they are already registered.
-         // However, if they are NOT registered, and a code is present, we should use it.
+         // If user is NOT registered, and a code is present, we can pre-fill it in Step 2.
          const initialCodeParam = urlParams.get('code');
          if (initialCodeParam && initialCodeParam.length === 4 && !isNaN(parseInt(initialCodeParam)) && !userMember.value) {
-             console.log("onMounted: Found initial code param and user is not registered. Handling team check...");
+             console.log("onMounted: Found initial code param and user is not registered. Pre-filling code.");
              state.teamCode = initialCodeParam;
-             // Use nextTick to ensure state.teamCode is set before calling handleContinue
-             nextTick(() => {
-                 handleContinue(); // This will check collection status and proceed
-             });
+             // User will land on Step 1 (Auth) or Step 0 (Entry).
+             // If they proceed through auth and land on Step 2 (Team Code), the code will be pre-filled.
          }
     }
 
@@ -1333,53 +1254,33 @@ onUnmounted(() => {
 });
 
 // Watch for changes in userMember state
-watch(userMember, (newValue, oldValue) => {
+watch(userMember, async (newValue, oldValue) => {
     console.log("userMember state changed:", oldValue ? 'exists' : 'null', "->", newValue ? 'exists' : 'null');
     // If userMember was not null and becomes null (e.g., after deletion OR logout)
     if (oldValue !== null && newValue === null) {
-        // Check if we are on the completion step (likely after deletion)
-        if (state.currentStep === 6) {
-            console.log("User member became null while on step 6. Going home.");
-            goHome(); // goHome resets state and checks auth
-            // REMOVED: state.errorMessage = '你的报名信息已删除。'; // Handled by watch on isAuthenticated
-        } else {
-            // If deleted from edit modal on another step, just update state and close modal
-            console.log("User member became null while NOT on step 6 (likely logout or deletion via modal).");
-            closeEditModal(); // Close modal if open
-            // REMOVED: state.errorMessage = '你的报名信息已删除。'; // Handled by watch on isAuthenticated
-            // Re-fetch team members if a team code is present to update the list view
-            if (state.teamCode) {
-                fetchTeamMembers(state.teamCode);
-            }
-        }
+        console.log("User member became null. Going home.");
+        // Go home resets state and checks auth, landing on Step 0
+        goHome();
+        // state.errorMessage is handled by watch(isAuthenticated) on logout
+        // If deletion happened while on Step 6, goHome handles it.
+        // If deletion happened via modal on another step, goHome handles it.
     }
-    // If userMember becomes non-null while on step 1 (team code) or 2 (auth prompt),
-    // and they are in the current team, redirect to completion
-    // This handles the case where the user logs in/registers via Kinde and is already in the team they checked
-    if (oldValue === null && newValue !== null && (state.currentStep === 1 || state.currentStep === 2 || state.currentStep === 3 || state.currentStep === 4 || state.currentStep === 5)) {
-         // Check if the newly logged-in user's Kinde ID matches any member in the *currently loaded* team members list
-         const userIsMemberOfCurrentTeam = state.currentTeamMembers.some(member => member.kinde_user_id === newValue.kinde_user_id);
-         if (userIsMemberOfCurrentTeam) {
-             console.log("User just logged in/registered and is in the current team. Redirecting to completion.");
-             // Ensure completionAllMembers is updated with the current team list
-             state.completionAllMembers = state.currentTeamMembers;
-             showStep(6);
-             nextTick(() => { // Scroll to the completion step
-                 const completionDiv = document.getElementById('step-completion');
-                 if (completionDiv) {
-                     completionDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                 } else {
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                 }
-             });
-         } else {
-             console.log("User logged in but not in current team or no team.");
-             // User is logged in but not registered in the *current* team.
-             // They should stay on step 1 or 2 to either join the current team or find another.
-             // The error message should guide them.
-             state.errorMessage = '你已登录，但未加入当前队伍或已加入其他队伍。';
-             // Stay on the current step (1, 2, 3, 4, or 5)
-         }
+    // If userMember becomes non-null (user just registered or logged in and is registered)
+    if (oldValue === null && newValue !== null) {
+        console.log("User member became non-null. User is now registered. Navigating to Step 6.");
+        // User is now registered. Navigate to the completion page.
+        state.teamCode = newValue.team_code; // Ensure teamCode is set from the new member data
+        await fetchTeamMembers(state.teamCode!); // Fetch all members for the team
+        state.completionAllMembers = state.currentTeamMembers; // Update completion list
+        showStep(6); // Go to completion page
+        nextTick(() => { // Scroll to the completion step
+            const completionDiv = document.getElementById('step-completion');
+            if (completionDiv) {
+                completionDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                 window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        });
     }
 });
 
@@ -1388,18 +1289,13 @@ watch(isAuthenticated, (newValue, oldValue) => {
     console.log("isAuthenticated state changed:", oldValue, "->", newValue);
     if (newValue === false && oldValue === true) {
         console.log("User logged out.");
-        // Clear relevant state and go to step 0
-        state.teamCode = null;
-        state.teamName = null;
-        state.currentTeamMembers = [];
-        state.completionAllMembers = [];
-        closeEditModal(); // Close edit modal if open
-        showStep(0); // Show the login/register prompt
+        // Go home resets state and lands on Step 0
+        goHome();
         state.errorMessage = '您已退出登录。'; // Show logout message
         setTimeout(() => { state.errorMessage = null; }, 3000); // Clear message
     }
-    // If isAuthenticated becomes true, the watch on userMember will handle showing step 6 if registered
-    // or the onMounted/handleCallback logic already put them on step 0 if not registered.
+    // If isAuthenticated becomes true, the watch on userMember will handle navigation if they are registered.
+    // If they are not registered, they will land on Step 1 (Auth Prompt) via onMounted logic.
 });
 
 // ADDED: Watch for changes in isCollectionPaused to potentially show a message
@@ -1429,12 +1325,13 @@ watch(isCollectionPaused, (newValue) => {
         <!-- Main Content Container -->
         <div class="w-full max-w-md mx-auto relative z-10">
 
-            <!-- Progress Bar (Visible in steps 3-6) -->
-            <div class="mb-8" v-if="state.currentStep >= 2"> <!-- Show from step 2 onwards -->
+            <!-- Progress Bar (Visible from step 1 onwards) -->
+            <div class="mb-8" v-if="state.currentStep >= 1"> <!-- Show from step 1 onwards -->
                 <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                    <span :class="{'text-white font-bold': state.currentStep >= 1}">组队码</span>
-                    <span :class="{'text-white font-bold': state.currentStep >= 2}">登录/注册</span>
-                    <span :class="{'text-white font-bold': state.currentStep >= 3}">元素</span> <!-- Changed from 颜色 to 元素 -->
+                    <!-- Updated labels for new flow -->
+                    <span :class="{'text-white font-bold': state.currentStep >= 1}">登录/注册</span>
+                    <span :class="{'text-white font-bold': state.currentStep >= 2}">组队码</span>
+                    <span :class="{'text-white font-bold': state.currentStep >= 3}">元素</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 4}">职业</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 5}">个人信息</span>
                     <span :class="{'text-white font-bold': state.currentStep >= 6}">完成</span>
@@ -1446,7 +1343,7 @@ watch(isCollectionPaused, (newValue) => {
 
              <!-- Global Error message display area -->
              <transition name="fade-in-up">
-                 <div v-if="state.errorMessage && (!state.showConfirmModal && !state.showCreateModal && !state.showEditModal  && !state.showLoadingOverlay)" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
+                 <div v-if="state.errorMessage && (!state.showConfirmModal && !state.showCreateModal && !state.showEditModal && !state.showTeamFullInfoModal && !state.showLoadingOverlay)" class="bg-red-600 bg-opacity-90 text-white text-sm p-3 rounded-lg mb-6 shadow-lg flex items-start" role="alert">
                      <img src="https://unpkg.com/lucide-static@latest/icons/circle-alert.svg" class="w-5 h-5 mr-3 text-yellow-300 flex-shrink-0 mt-0.5" alt="Error">
                      <span class="break-words flex-grow">{{ state.errorMessage }}</span>
                     <button type="button" class="ml-2 -mt-1 text-gray-300 hover:text-white transition-colors" @click="state.errorMessage = null" aria-label="关闭错误消息">
@@ -1489,13 +1386,63 @@ watch(isCollectionPaused, (newValue) => {
                  <!-- END ADDED -->
 
                 <!-- Enter Button -->
+                <!-- Navigate to Step 1 (Auth Prompt) -->
                 <button @click="showStep(1)" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300" :disabled="isCollectionPaused">
                     进入报名 / 组队
                 </button>
             </div>
 
-            <!-- Step 1: Team Code Input -->
-            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1">
+            <!-- Step 1: Login/Register Prompt (Moved from old Step 2) -->
+            <div id="step-auth-prompt" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 1">
+                 <!-- Header -->
+                 <div class="text-center mb-8">
+                     <div class="w-24 h-24 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
+                        <img src="https://unpkg.com/lucide-static@latest/icons/log-in.svg" class="w-12 h-12 text-white" alt="Auth">
+                    </div>
+                    <h1 class="text-3xl font-bold mb-2">登录或注册</h1>
+                    <p class="text-cyan-300">请选择登录或者注册新账号以继续报名，账号系统使用一个第三方的登录集成服务 Kinde 并收集必要的个人信息</p>
+                </div>
+
+                 <!-- ADDED: Message if collection is paused -->
+                 <div v-if="isCollectionPaused" class="text-center text-yellow-400 mb-6 font-bold">
+                     <p>报名收集已暂停。</p>
+                 </div>
+                 <!-- END ADDED -->
+
+                 <!-- Conditional content based on auth/member status -->
+                 <div v-if="isAuthenticated && hasUserMember" class="text-center mb-6">
+                     <p class="text-lg text-green-400 font-semibold mb-2">你已登录并已报名！</p>
+                     <p class="text-gray-300 text-sm">你的报名信息已关联到你的 Kinde 账号。</p>
+                     <!-- Navigate to Step 6 (Completion) -->
+                     <button @click="showStep(6)" class="mt-4 bg-green-700 hover:bg-green-600 text-white py-2 px-4 rounded-lg transition">查看我的报名信息</button>
+                 </div>
+                 <div v-else-if="isAuthenticated && !hasUserMember" class="text-center mb-6">
+                     <p class="text-lg text-yellow-400 font-semibold mb-2">你已登录！</p>
+                     <p class="text-gray-300 text-sm">请继续完成报名信息填写。</p>
+                     <!-- Navigate to Step 2 (Team Code) -->
+                     <button @click="showStep(2)" class="mt-4 bg-yellow-700 hover:bg-yellow-600 text-white py-2 px-4 rounded-lg transition" :disabled="isCollectionPaused">继续报名</button>
+                 </div>
+                 <div v-else class="text-center mb-6">
+                    <p class="text-gray-300 text-sm mb-4">请选择登录或注册方式：</p>
+                    <!-- Call initiateLogin -->
+                    <button @click="initiateLogin('login')" class="btn-glow w-full bg-blue-700 hover:bg-blue-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :disabled="isCollectionPaused">
+                        登录
+                    </button>
+                    <!-- Call initiateLogin -->
+                    <button @click="initiateLogin('create')" class="btn-glow w-full bg-teal-700 hover:bg-teal-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :disabled="isCollectionPaused">
+                        注册新账号
+                    </button>
+                </div>
+
+                 <!-- Navigate back to Step 0 (Entry) -->
+                 <button type="button" @click="showStep(0)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
+                    返回活动信息
+                </button>
+            </div>
+
+
+            <!-- Step 2: Team Code Input (Moved from old Step 1) -->
+            <div id="step-team-code" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 2">
                 <!-- Header -->
                 <div class="text-center mb-8">
                      <div class="w-24 h-24 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
@@ -1519,7 +1466,7 @@ watch(isCollectionPaused, (newValue) => {
                         class="input-code w-full bg-gray-800 bg-opacity-50 glass rounded-lg py-4 px-6 text-2xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500 text-center tracking-[0.5em]"
                         @input="(event) => state.teamCode = (event.target as HTMLInputElement).value.replace(/[^0-9]/g, '')"
                         @keydown.enter="handleContinue()"
-                        :disabled="isCollectionPaused"
+                        :disabled="state.showLoadingOverlay || isCollectionPaused"
                     >
                     <p class="mt-2 text-xs text-gray-400">不存在的组队码将自动创建新队伍</p>
                 </div>
@@ -1534,71 +1481,13 @@ watch(isCollectionPaused, (newValue) => {
                 <button @click="handleContinue()" :disabled="state.showLoadingOverlay || isCollectionPaused" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :class="{'opacity-50 cursor-not-allowed': state.showLoadingOverlay || isCollectionPaused}">
                     {{ state.showLoadingOverlay ? '检查中...' : '继续' }}
                 </button>
-                 <button type="button" @click="goHome()" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
-                    返回活动信息
-                </button>
-            </div>
-
-            <!-- Step 2: Login/Register Prompt -->
-            <div id="step-auth-prompt" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 2">
-                 <!-- Header -->
-                 <div class="text-center mb-8">
-                     <div class="w-24 h-24 bg-gradient-to-br from-blue-600 to-cyan-600 rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg">
-                        <img src="https://unpkg.com/lucide-static@latest/icons/log-in.svg" class="w-12 h-12 text-white" alt="Auth">
-                    </div>
-                    <h1 class="text-3xl font-bold mb-2">登录或注册</h1>
-                    <p class="text-cyan-300">请选择登录或者注册新账号以继续报名，账号系统使用一个第三方的登录集成服务 Kinde 并收集必要的个人信息</p>
-                </div>
-
-                 <!-- Team Info Box -->
-                 <div class="glass rounded-xl p-4 mb-8 border border-gray-700">
-                     <div class="flex items-center">
-                         <div class="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-full p-2 mr-3 shadow-md flex-shrink-0">
-                             <img src="https://unpkg.com/lucide-static@latest/icons/users.svg" class="w-5 h-5 text-white" alt="Team">
-                        </div>
-                        <div>
-                            <h3 class="font-bold">{{ state.teamName || '队伍名称' }}</h3>
-                             <p class="text-xs text-gray-400">{{ state.teamCode || '----' }} · 成员: {{ state.currentTeamMembers.length }}/3</p>
-                        </div>
-                    </div>
-                </div>
-
-                 <!-- ADDED: Message if collection is paused -->
-                 <div v-if="isCollectionPaused" class="text-center text-yellow-400 mb-6 font-bold">
-                     <p>报名收集已暂停。</p>
-                 </div>
-                 <!-- END ADDED -->
-
-                 <div v-if="isAuthenticated && hasUserMember" class="text-center mb-6">
-                     <p class="text-lg text-green-400 font-semibold mb-2">你已登录并已报名！</p>
-                     <p class="text-gray-300 text-sm">你的报名信息已关联到你的 Kinde 账号。</p>
-                     <button @click="showStep(6)" class="mt-4 bg-green-700 hover:bg-green-600 text-white py-2 px-4 rounded-lg transition">查看我的报名信息</button>
-                 </div>
-                 <div v-else-if="isAuthenticated && !hasUserMember" class="text-center mb-6">
-                     <p class="text-lg text-yellow-400 font-semibold mb-2">你已登录！</p>
-                     <p class="text-gray-300 text-sm">请继续完成报名信息填写。</p>
-                     <button @click="showStep(3)" class="mt-4 bg-yellow-700 hover:bg-yellow-600 text-white py-2 px-4 rounded-lg transition" :disabled="isCollectionPaused">继续填写报名信息</button>
-                 </div>
-                 <div v-else class="text-center mb-6">
-                    <p class="text-gray-300 text-sm mb-4">请选择登录或注册方式：</p>
-                    <!-- Call initiateLogin -->
-                    <button @click="initiateLogin('login')" class="btn-glow w-full bg-blue-700 hover:bg-blue-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :disabled="isCollectionPaused">
-                        登录
-                    </button>
-                    <!-- Call initiateLogin -->
-                    <button @click="initiateLogin('create')" class="btn-glow w-full bg-teal-700 hover:bg-teal-600 rounded-lg py-3 font-bold transition duration-300 mb-4" :disabled="isCollectionPaused">
-                        注册新账号
-                    </button>
-                </div>
-
-
+                 <!-- Navigate back to Step 1 (Auth Prompt) -->
                  <button type="button" @click="showStep(1)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回
                 </button>
             </div>
 
-
-            <!-- Step 3: Color Selection -->
+            <!-- Step 3: Color Selection (Step number remains 3) -->
             <div id="step-color-selection" class="glass rounded-3xl p-4 sm:p-6 md:p-8 fade-in" v-if="state.currentStep === 3">
                 <!-- Header -->
                 <div class="text-center mb-8">
@@ -1698,12 +1587,13 @@ watch(isCollectionPaused, (newValue) => {
                  <button @click="showStep(4)" :disabled="!state.selectedColor || isCollectionPaused" :class="{'opacity-50 cursor-not-allowed': !state.selectedColor || isCollectionPaused}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
                 </button>
+                <!-- Navigate back to Step 2 (Team Code) -->
                 <button type="button" @click="showStep(2)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回
                 </button>
             </div>
 
-            <!-- Step 4: Job Selection -->
+            <!-- Step 4: Job Selection (Step number remains 4) -->
             <div id="step-job-selection" class="glass rounded-3xl p-4 sm:p-6 md:p-8 fade-in" v-if="state.currentStep === 4">
                  <!-- Header -->
                 <div class="text-center mb-8">
@@ -1811,12 +1701,13 @@ watch(isCollectionPaused, (newValue) => {
                 <button @click="showStep(5)" :disabled="!state.selectedJob || isCollectionPaused" :class="{'opacity-50 cursor-not-allowed': !state.selectedJob || isCollectionPaused}" class="btn-glow w-full bg-purple-700 hover:bg-purple-600 rounded-lg py-3 font-bold transition duration-300 mb-4">
                     下一步
                 </button>
+                <!-- Navigate back to Step 3 (Color Selection) -->
                 <button type="button" @click="showStep(3)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                     返回
                 </button>
             </div>
 
-            <!-- Step 5: Personal Info -->
+            <!-- Step 5: Personal Info (Step number remains 5) -->
             <div id="step-personal-info" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 5">
                  <!-- Header -->
                  <div class="text-center mb-8">
@@ -1866,39 +1757,39 @@ watch(isCollectionPaused, (newValue) => {
                                 <img src="https://unpkg.com/lucide-static@latest/icons/user.svg" class="w-10 h-10 text-gray-400" alt="Default Avatar">
                             </div>
                              <!-- File Input Button using a label -->
-                            <label for="avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300">
+                            <label for="avatar-upload" class="cursor-pointer bg-gray-700 hover:bg-gray-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition duration-300" :class="{'opacity-50 cursor-not-allowed': isCollectionPaused}">
                                 {{ state.avatarFile ? '更换头像' : '选择图片' }}
                             </label>
                             <!-- Hidden file input -->
-                            <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden">
+                            <input type="file" id="avatar-upload" @change="handleAvatarChange" accept="image/png, image/jpeg, image/gif, image/webp" class="hidden" :disabled="isCollectionPaused">
 
                             <!-- MODIFIED: Use dedicated clear function -->
-                            <button v-if="state.avatarFile" type="button" @click="clearAvatarFile()" class="text-xs text-red-400 hover:text-red-500 transition">移除头像</button>
+                            <button v-if="state.avatarFile" type="button" @click="clearAvatarFile()" class="text-xs text-red-400 hover:text-red-500 transition" :disabled="isCollectionPaused">移除头像</button>
                         </div>
                     </div>
 
                     <!-- Other Fields -->
                     <div class="mb-4">
                         <label for="maimai-id" class="block text-sm font-medium text-purple-300 mb-2">舞萌ID <span class="text-red-500">*</span></label>
-                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：Om1tted" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="13">
+                        <input type="text" id="maimai-id" v-model="state.maimaiId" required placeholder="例如：Om1tted" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="13" :disabled="isCollectionPaused">
                          <p class="mt-1 text-xs text-gray-400">用于唯一识别你的报名信息。</p>
                     </div>
 
                     <div class="mb-4">
                         <label for="nickname" class="block text-sm font-medium text-purple-300 mb-2">称呼 <span class="text-red-500">*</span></label>
-                        <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：om1t" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50">
+                        <input type="text" id="nickname" v-model="state.nickname" required placeholder="例如：om1t" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" maxlength="50" :disabled="isCollectionPaused">
                     </div>
 
                     <div class="mb-6">
                         <label for="qq-number" class="block text-sm font-medium text-purple-300 mb-2">QQ号 <span class="text-red-500">*</span></label>
-                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15">
+                        <input type="text" inputmode="numeric" id="qq-number" v-model="state.qqNumber" required placeholder="例如：1234567890" class="form-input w-full rounded-lg py-3 px-4 text-white focus:outline-none" pattern="[1-9][0-9]{4,14}" maxlength="15" :disabled="isCollectionPaused">
                          <p class="mt-1 text-xs text-gray-400">用于组队联系。</p>
                     </div>
 
                     <!-- Privacy Agreement -->
                      <div class="mb-6">
-                        <label class="flex items-start cursor-pointer">
-                            <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-500 rounded bg-gray-700 outline-none">
+                        <label class="flex items-start cursor-pointer" :class="{'opacity-50 cursor-not-allowed': isCollectionPaused}">
+                            <input type="checkbox" id="privacy-agree" v-model="state.privacyAgreed" required class="mt-1 mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-500 rounded bg-gray-700 outline-none" :disabled="isCollectionPaused">
                              <span class="text-xs text-gray-300 select-none">我已阅读并同意<router-link to="/privacy" class="text-purple-400 hover:underline font-medium">隐私政策</router-link>，允许收集和使用我的QQ号用于组队联系目的。<span class="text-red-500">*</span></span>
                         </label>
                     </div>
@@ -1908,18 +1799,19 @@ watch(isCollectionPaused, (newValue) => {
                          {{ state.showLoadingOverlay ? '正在完成...' : '完成注册' }}
                     </button>
 
+                    <!-- Navigate back to Step 4 (Job Selection) -->
                     <button type="button" @click="showStep(4)" class="w-full bg-transparent border border-gray-600 rounded-lg py-3 font-medium transition duration-300 hover:bg-gray-700 text-gray-300">
                         返回
                     </button>
                 </form>
             </div>
 
-            <!-- Step 6: Completion Page -->
+            <!-- Step 6: Completion Page (Step number remains 6) -->
             <div id="step-completion" class="glass rounded-3xl p-8 fade-in" v-if="state.currentStep === 6">
                  <!-- Progress Bar (Completed) -->
                 <div class="mb-8">
                     <div class="flex justify-between text-xs text-gray-400 mb-2 px-1">
-                        
+                         <!-- Labels are hidden on completion page in this design -->
                     </div>
                     <div class="mb-8"><div class="mb-8" style="width: 100%;"></div></div>
                 </div>
@@ -2099,6 +1991,7 @@ watch(isCollectionPaused, (newValue) => {
                               </div>
                              <span class="text-gray-300 flex-grow">{{ member.nickname }} ({{ getColorText(member.color) }}, {{ getJobText(member.job) }})</span>
                          </div>
+                         <!-- Edit button in modal - only show if it's the current user -->
                          <button
                             v-if="isAuthenticated && currentUserMember && member.kinde_user_id === kindeUser?.id"
                              type="button"
@@ -2143,6 +2036,68 @@ watch(isCollectionPaused, (newValue) => {
                 </div>
             </div>
         </div>
+
+        <!-- NEW: Team Full Info Modal -->
+        <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showTeamFullInfoModal">
+            <div class="glass rounded-2xl p-6 max-w-sm w-full fade-in shadow-xl border border-gray-700 my-8">
+                <h3 class="text-xl font-bold mb-4 text-center">队伍信息 (已满)</h3>
+                <p class="mb-4 text-sm text-gray-200 text-center">
+                    队伍 "<span class="text-purple-400 font-bold">{{ state.teamName || '加载中...' }}</span>" ({{ state.teamCode }})
+                    <br>
+                    已满员 ({{ state.currentTeamMembers.length }}/3)，无法加入。
+                </p>
+
+                <!-- Member List -->
+                <div class="mb-6 space-y-3 max-h-48 overflow-y-auto text-sm border-t border-b border-gray-700 py-3 px-2">
+                    <h4 class="font-semibold text-purple-300 block mb-2 text-center">当前成员:</h4>
+                    <div v-if="state.currentTeamMembers.length === 0" class="text-center text-gray-500 text-sm py-2">暂无成员信息</div>
+                    <!-- Loop through state.currentTeamMembers -->
+                    <div v-else v-for="member in state.currentTeamMembers" :key="member.maimai_id || (member.nickname + member.qq_number)" class="flex items-center p-1 bg-gray-800 bg-opacity-30 rounded-md">
+                        <!-- Avatar -->
+                        <img
+                            v-if="member.avatar_url"
+                            :src="member.avatar_url"
+                            alt="头像"
+                            class="rounded-full w-8 h-8 object-cover mr-3 flex-shrink-0 border border-gray-600"
+                            :class="[`border-${member.color}-500`]"
+                        >
+                        <div
+                            v-else
+                            :class="`color-${member.color}-bg`"
+                            class="rounded-full w-8 h-8 flex items-center justify-center mr-3 flex-shrink-0 shadow-sm border border-gray-600"
+                        >
+                            <img :src="getIconPath('color', member.color)" class="w-4 h-4 text-white" :alt="getColorText(member.color) + '图标'">
+                        </div>
+                        <!-- Info -->
+                        <div class="flex-grow">
+                            <p class="font-medium text-sm text-white">{{ member.nickname }}</p>
+                            <p class="text-xs text-gray-300 flex items-center flex-wrap">
+                                <span class="flex items-center mr-2">
+                                    <span :class="`color-indicator color-${member.color}-bg`"></span>{{ getColorText(member.color) }}
+                                </span>
+                                <span class="flex items-center">
+                                    <img :src="getIconPath('job', member.job)" class="w-3 h-3 inline-block mr-1 flex-shrink-0" :alt="getJobText(member.job) + '图标'">
+                                    {{ getJobText(member.job) }}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Close Button -->
+                <div class="flex justify-center">
+                    <button
+                        type="button"
+                        @click="state.showTeamFullInfoModal = false"
+                        class="w-full sm:w-auto py-2 px-6 rounded-lg bg-purple-700 hover:bg-purple-600 transition btn-glow text-sm font-medium"
+                    >
+                        关闭
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- End of Team Full Info Modal -->
+
 
         <!-- Edit/Delete Member Modal -->
         <div class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto" v-show="state.showEditModal">
@@ -2437,7 +2392,7 @@ watch(isCollectionPaused, (newValue) => {
 .disabled-option {
     opacity: 0.5;
     cursor: not-allowed;
-    pointer-events: none; /* Disable clicks */
+    /* pointer-events: none; /* Disable clicks - handled by @click logic */
 }
 
 /* Color Backgrounds */
@@ -2500,7 +2455,7 @@ watch(isCollectionPaused, (newValue) => {
 
 @keyframes floatUp {
     0% {
-        transform: translateY(0) rotate(0deg);
+        transform: translateY(var(--start-y, 0vh)) translateX(var(--start-x, 0vw)) rotate(var(--start-rotate, 0deg));
         opacity: 0.1;
     }
     50% {
