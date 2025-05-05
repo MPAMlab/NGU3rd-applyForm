@@ -1403,7 +1403,8 @@ watch(isCollectionPaused, (newValue) => {
                         <img src="https://unpkg.com/lucide-static@latest/icons/log-in.svg" class="w-12 h-12 text-white" alt="Auth">
                     </div>
                     <h1 class="text-3xl font-bold mb-2">登录或注册</h1>
-                    <p class="text-cyan-300">请选择登录或者注册新账号以继续报名，账号系统使用一个第三方的登录集成服务 Kinde 并收集必要的个人信息</p>
+                    <p class="text-cyan-300">请选择登录或者注册新账号以继续报名</p>
+                    <p class="text-cyan-300 text-sm">账号系统使用一个第三方的登录集成服务 Kinde 并收集必要的个人信息</p>
                 </div>
 
                  <!-- ADDED: Message if collection is paused -->
