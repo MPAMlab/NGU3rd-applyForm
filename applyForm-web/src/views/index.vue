@@ -1135,10 +1135,13 @@ function createTriangleBackground(): void {
 
 // In the template, change @click="login('login')" to @click="initiateLogin('login')"
 // and @click="login('create')" to @click="initiateLogin('create')"
+// In src/views/index.vue, around line 1138-1141
 function initiateLogin(prompt: 'login' | 'create'): void {
-    // Pass the current step as context. Team code context is less relevant now.
-    login(prompt, { currentStep: state.currentStep });
+    // Pass the current teamCode and step as context to satisfy the login function's type requirement.
+    // state.teamCode might be null at this step in the new flow, which is acceptable by the type.
+    login(prompt, { teamCode: state.teamCode, currentStep: state.currentStep });
 }
+
 // --- Lifecycle Hooks ---
 
 onMounted(async () => {
