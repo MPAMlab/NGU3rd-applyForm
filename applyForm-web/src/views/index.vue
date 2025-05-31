@@ -119,7 +119,7 @@ const state: State = reactive({
     confettiInterval: null,
 
     eventInfo: {
-        title: "NGU 第三届音游娱乐赛",
+        title: "NGU 3rd 音游娱乐赛",
         location: "翡尔堡家庭娱乐中心(郑州万象城三楼店)",
         time: "2025年6月8日",
         description: "Never ever and ever... 具体规则以及如有变动，请留意群内公告。 官网链接：https://ngu3rd.mpam-lab.xyz",
